@@ -1,239 +1,96 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="utf-8">
     <title>Emre Çoban</title>
-    <meta content="width=device-width, initial-scale=1.0" name="viewport">
-    <meta content="Free HTML Templates" name="keywords">
-    <meta content="Free HTML Templates" name="description">
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
     <!-- Favicon -->
-    <link href="img/favicon.ico" rel="icon">
+    <link rel="icon" href="img/favicon.ico">
 
-    <!-- Google Web Fonts -->
-    <link rel="preconnect" href="https://fonts.gstatic.com">
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet"> 
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
 
     <!-- Font Awesome -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.10.0/css/all.min.css" rel="stylesheet">
 
-    <!-- Libraries Stylesheet -->
-    <link href="lib/owlcarousel/assets/owl.carousel.min.css" rel="stylesheet">
-    <link href="lib/lightbox/css/lightbox.min.css" rel="stylesheet">
-
-    <!-- Customized Bootstrap Stylesheet -->
-    <link href="css/style.css" rel="stylesheet">
+    <!-- Custom Styles -->
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8f9fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            text-align: center;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+        }
+        .profile-img {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin-bottom: 20px;
+        }
+        h1 {
+            margin: 10px 0;
+            font-size: 28px;
+        }
+        h2 {
+            font-size: 18px;
+            color: #6c757d;
+            margin-bottom: 20px;
+        }
+        .links a {
+            display: block;
+            margin: 10px 0;
+            text-decoration: none;
+            font-size: 16px;
+            color: #007bff;
+            transition: 0.3s;
+        }
+        .links a:hover {
+            text-decoration: underline;
+        }
+        .btn {
+            display: inline-block;
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-decoration: none;
+            margin-top: 20px;
+        }
+        .btn:hover {
+            background: #0056b3;
+        }
+    </style>
 </head>
+<body>
 
-<body data-spy="scroll" data-target=".navbar" data-offset="51">
-    <!-- Navbar Start -->
-    <nav class="navbar fixed-top shadow-sm navbar-expand-lg bg-light navbar-light py-3 py-lg-0 px-lg-5">
-        <a href="index.html" class="navbar-brand ml-lg-3">
-            <h1 class="m-0 display-5"><span class="text-primary">Emre</span>Çoban</h1>
-        </a>
-        <button type="button" class="navbar-toggler" data-toggle="collapse" data-target="#navbarCollapse">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="collapse navbar-collapse px-lg-3" id="navbarCollapse">
-            <div class="navbar-nav m-auto py-0">
-                <a href="#home" class="nav-item nav-link active">Home</a>
-                <a href="#about" class="nav-item nav-link">About</a>
-                <a href="#qualification" class="nav-item nav-link">Quality</a>
-                <a href="#contact" class="nav-item nav-link">Accounts</a>
-            </div>
-            <a href="https://www.linkedin.com/in/emre-çoban-73b3851ba/" target="_blank" class="btn btn-outline-primary d-none d-lg-block">Hire Me</a>
-        
+    <div class="container">
+        <img src="img/profile.jpg" alt="Emre Çoban" class="profile-img">
+        <h1>Emre Çoban</h1>
+        <h2>AI Engineer & Python Developer</h2>
+        <div class="links">
+            <a href="https://www.linkedin.com/in/emre-çoban-73b3851ba/" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            <a href="https://github.com/emrecobann" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+            <a href="https://medium.com/@emrecobann" target="_blank"><i class="fab fa-medium"></i> Medium</a>
         </div>
-    </nav>
-    <!-- Navbar End -->
-
-
- 
-    <!-- Header Start -->
-    <div class="container-fluid bg-primary d-flex align-items-center mb-5 py-5" id="home" style="min-height: 100vh;">
-        <div class="container">
-            <div class="row align-items-center">
-                <div class="col-lg-5 px-5 pl-lg-0 pb-5 pb-lg-0">
-                    <img class="img-fluid w-100 rounded-circle shadow-sm" style="scale:0.6" src="img/profile.jpg" alt="">
-                </div>
-                <div class="col-lg-7 text-center text-lg-left">
-                    <h3 class="text-white font-weight-normal mb-3">I'm</h3>
-                    <h1 class="display-3 text-uppercase text-primary mb-2" style="-webkit-text-stroke: 2px #ffffff;">Emre Çoban</h1>
-                    <h1 class="typed-text-output d-inline font-weight-lighter text-white"></h1>
-                    <div class="typed-text d-none">AI Engineer, Python Developer</div>
-                    <div class="d-flex align-items-center justify-content-center justify-content-lg-start pt-5">
-                        <a href="img/CV_emre_coban.pdf" target ="_blank" class="btn btn-outline-light mr-5">Download CV</a>
-                       
-                    </div>
-                </div>
-            </div>
-        </div>
+        <a href="img/CV_emre_coban.pdf" class="btn" target="_blank">Download CV</a>
     </div>
-    <!-- Header End -->
 
-
-    <!-- About Start -->
-    <div class="container-fluid py-5" id="about">
-        <div class="container">
-            <div class="position-relative d-flex align-items-center justify-content-center">
-                <h1 class="display-1 text-uppercase text-white" style="-webkit-text-stroke: 1px #dee2e6;">About</h1>
-                <h1 class="position-absolute text-uppercase text-primary">About Me</h1>
-            </div>
-            <div class="row align-items-center">
-                
-                <div class="col-lg-7">
-                    <h3 class="mb-4">AI Engineer & Python Developer</h3>
-                    <p> AI Engineer graduated from Hacettepe University with 3.59/4.00 Gpa. 
-                        I like to study and research new things. Interested in time series analysis and forecasting nowadays. I am improving myself generally in data science and machine learning by following state-of-the-art methods, competitions, etc.</p>
-                    <div class="row mb-3">
-                        <div class="col-sm-6 py-2"><h6>Name: <span class="text-secondary">Emre Çoban</span></h6></div>
-                        <div class="col-sm-6 py-2"><h6>Birthday: <span class="text-secondary">14 November 2002</span></h6></div>
-                        <div class="col-sm-6 py-2"><h6>Experience: <span class="text-secondary">3 Years</span></h6></div>
-                        <div class="col-sm-6 py-2"><h6>Phone: <span class="text-secondary">+90 542 844 06 02 </span></h6></div>
-                        <div class="col-sm-6 py-2"><h6>Email: <span class="text-secondary">emrecobann02@gmail.com</span></h6></div>
-                        <div class="col-sm-6 py-2"><h6>Address: <span class="text-secondary"> Ankara, Turkey</span></h6></div>
-                    </div>
-                    <a href="https://www.linkedin.com/in/emre-çoban-73b3851ba/" target="_blank" class="btn btn-outline-primary mr-4">Hire Me</a>
-                    
-                </div>
-            </div>
-        </div>
-    </div>
-    <!-- About End -->
-
-
-    <!-- Qualification Start -->
-    <div class="container-fluid py-5" id="qualification">
-        <div class="container">
-            <div class="position-relative d-flex align-items-center justify-content-center">
-                <h1 class="display-1 text-uppercase text-white" style="-webkit-text-stroke: 1px #dee2e6;">Quality</h1>
-                <h1 class="position-absolute text-uppercase text-primary">Education & Expericence</h1>
-            </div>
-            <div class="row align-items-center">
-                <div class="col-lg-6">
-                    <h3 class="mb-4">My Education</h3>
-                    <div class="border-left border-primary pt-2 pl-4 ml-2">
-                        <div class="position-relative mb-4">
-                            <i class="far fa-dot-circle text-primary position-absolute" style="top: 2px; left: -32px;"></i>
-                            <h5 class="font-weight-bold mb-1">BSc In Artificial Intelligence Engineering</h5>
-                            <p class="mb-2"><strong>Hacettepe University</strong> | <small>2020 - 2024</small></p>
-                            <p>3.55/4.00</p>
-                        </div>
-                        
-                       
-                    </div>
-                </div>
-                <div class="col-lg-6">
-                    <h3 class="mb-4">My Expericence</h3>
-                    <div class="border-left border-primary pt-2 pl-4 ml-2">
-                        
-                        <div class="position-relative mb-4">
-                            <i class="far fa-dot-circle text-primary position-absolute" style="top: 2px; left: -32px;"></i>
-                            <h5 class="font-weight-bold mb-1">Candidate AI Engineer</h5>
-                            <p class="mb-2"><strong>HAVELSAN</strong> | <small>March 2024 - Present</small></p>
-                            <p>After my successful internship at HAVELSAN I started as a Candidate Engineer here. Nowadays I  am working in the field of time series forecasting and exploring state-of-the-art methods. </p>
-                        </div>
-                        
-                        <div class="position-relative mb-4">
-                            <i class="far fa-dot-circle text-primary position-absolute" style="top: 2px; left: -32px;"></i>
-                            <h5 class="font-weight-bold mb-1">AI Engineer & Founding Engineer</h5>
-                            <p class="mb-2"><strong>Turkish Aerospace Industries</strong> | <small>September 2023 - February 2024</small></p>
-                            <p>As a part of the AI Team we have successfully undertaken projects for TUBITAK and Sabancı, showcasing our expertise in artificial intelligence.</p>
-                        </div>
-                        
-                        <div class="position-relative mb-4">
-                            <i class="far fa-dot-circle text-primary position-absolute" style="top: 2px; left: -32px;"></i>
-                            <h5 class="font-weight-bold mb-1">AI Engineering Intern</h5>
-                            <p class="mb-2"><strong>HAVELSAN</strong> | <small>June 2023 - August 2023</small></p>
-                            <p>Worked in Computer Vision, 3D Scene reconstruction, and Time series analysis and forecasting. </p>
-                        </div>
-                        
-                        <div class="position-relative mb-4">
-                            <i class="far fa-dot-circle text-primary position-absolute" style="top: 2px; left: -32px;"></i>
-                            <h5 class="font-weight-bold mb-1">AI Engineering Intern</h5>
-                            <p class="mb-2"><strong>Turkish Aerospace Industries</strong> | <small>November 2022 - May 2023</small></p>
-                            <p>Working as Sky Experience Intern with AI Team. </p>
-                        </div>
-                        <div class="position-relative mb-4">
-                            <i class="far fa-dot-circle text-primary position-absolute" style="top: 2px; left: -32px;"></i>
-                            <h5 class="font-weight-bold mb-1">AI Engineering Intern</h5>
-                            <p class="mb-2"><strong>SisaSoft</strong> | <small>June 2022 - August 2022</small></p>
-                            <p>Worked on Deep Learning, especially in Computer Vision with AI Team</p>
-                        </div>
-
-                        
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <!-- Qualification End -->
-
-
-
-    <!-- Contact Start -->
-    <div class="container-fluid py-5" id="contact">
-        <div class="container">
-            <div class="position-relative d-flex align-items-center justify-content-center">
-                <h1 class="display-1 text-uppercase text-white" style="-webkit-text-stroke: 1px #dee2e6;">Accounts</h1>
-                <h1 class="position-absolute text-uppercase text-primary">My Accounts</h1>
-            </div>
-            <div class="row justify-content-center">
-                <div class="col-lg-8">
-                    <li>
-                        <a href="https://www.linkedin.com/in/emre-çoban-73b3851ba/" target="_blank">Linked In</a>
-                    </li>
-                    <li>
-                        <a href="https://github.com/emrecobann" target="_blank">GitHub</a>
-                    </li>
-                    <li>
-                        <a href="https://medium.com/@emrecobann" target="_blank">Medium</a>
-                    </li>
-                </div>
-            </div>
-        </div>
-    </div>
-    <!-- Contact End -->
-
-
-    <!-- Footer Start -->
-    <div class="container-fluid bg-primary text-white mt-5 py-5 px-sm-3 px-md-5">
-        <div class="container text-center py-5">
-            <div class="d-flex justify-content-center mb-4">
-
-                <a class="btn btn-light btn-social mr-2" target=”_blank” href="https://www.linkedin.com/in/emre-çoban-73b3851ba/"><i class="fab fa-linkedin-in"></i></a>
-            </div>
-           
-            <p class="m-0">&copy; <a class="text-white font-weight-bold" href="#">Emre Çoban</a>. All Rights Reserved. Designed by <a class="text-white font-weight-bold" href="https://htmlcodex.com">HTML Codex</a>
-            </p>
-        </div>
-    </div>
-    <!-- Footer End -->
-
-    <!-- Scroll to Bottom -->
-    <i class="fa fa-2x fa-angle-down text-white scroll-to-bottom"></i>
-
-    <!-- Back to Top -->
-    <a href="#" class="btn btn-outline-dark px-0 back-to-top"><i class="fa fa-angle-double-up"></i></a>
-
-
-    <!-- JavaScript Libraries -->
-    <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.bundle.min.js"></script>
-    <script src="lib/typed/typed.min.js"></script>
-    <script src="lib/easing/easing.min.js"></script>
-    <script src="lib/waypoints/waypoints.min.js"></script>
-    <script src="lib/owlcarousel/owl.carousel.min.js"></script>
-    <script src="lib/isotope/isotope.pkgd.min.js"></script>
-    <script src="lib/lightbox/js/lightbox.min.js"></script>
-
-    <!-- Contact Javascript File -->
-    <script src="mail/jqBootstrapValidation.min.js"></script>
-    <script src="mail/contact.js"></script>
-
-    <!-- Template Javascript -->
-    <script src="js/main.js"></script>
+</body>
+</html>
 </body>
 
 </html>
