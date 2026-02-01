@@ -290,8 +290,6 @@ function init() {
   $("btnStart").addEventListener("click", onStart);
   $("btnPrev").addEventListener("click", onPrev);
   $("btnSaveNext").addEventListener("click", onSaveNext);
-  $("btnExport").addEventListener("click", onExport);
-  $("btnReset").addEventListener("click", onReset);
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
@@ -396,8 +394,6 @@ async function onStart() {
 
     setHidden($("screenLogin"), true);
     setHidden($("screenApp"), false);
-    setHidden($("btnExport"), false);
-    setHidden($("btnReset"), false);
     setHidden($("userBadge"), false);
 
     // Update user badge with new structure
@@ -540,7 +536,6 @@ function renderCase() {
 
       <div class="panel">
         <h2>Model Outputs (Blinded)</h2>
-        <p class="help" style="margin-bottom:16px;">Score each model output from 1-5. Clinical accuracy is the main criterion.</p>
         <div class="outputs" id="outputs"></div>
       </div>
     </div>
@@ -565,31 +560,21 @@ function renderCase() {
     card.className = "output";
     card.innerHTML = `
       <div class="output-head" id="${headId}">
-        <div class="output-title">Model ${label}</div>
-        <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Score" onclick="event.stopPropagation()">
-          <option value="" ${!existingScore ? "selected" : ""}>Score...</option>
-          <option value="1" ${existingScore === "1" ? "selected" : ""}>1</option>
-          <option value="2" ${existingScore === "2" ? "selected" : ""}>2</option>
-          <option value="3" ${existingScore === "3" ? "selected" : ""}>3</option>
-          <option value="4" ${existingScore === "4" ? "selected" : ""}>4</option>
-          <option value="5" ${existingScore === "5" ? "selected" : ""}>5</option>
+        <div class="output-title" style="font-weight:600;font-size:1.05em;">Model ${label}</div>
+        <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Score" style="min-width:90px;font-weight:500;">
+          <option value="" ${!existingScore ? "selected" : ""}>Rate...</option>
+          <option value="5" ${existingScore === "5" ? "selected" : ""}>⭐ 5</option>
+          <option value="4" ${existingScore === "4" ? "selected" : ""}>⭐ 4</option>
+          <option value="3" ${existingScore === "3" ? "selected" : ""}>⭐ 3</option>
+          <option value="2" ${existingScore === "2" ? "selected" : ""}>⭐ 2</option>
+          <option value="1" ${existingScore === "1" ? "selected" : ""}>⭐ 1</option>
         </select>
       </div>
-      <div class="output-body open" id="${bodyId}">
-        <div class="output-text">${escapeHtml(outputText || "[EMPTY]")}</div>
+      <div class="output-body" id="${bodyId}" style="display:block;">
+        <div class="output-text" style="line-height:1.6;">${escapeHtml(outputText || "[EMPTY]")}</div>
       </div>
     `;
     outEl.appendChild(card);
-
-    const head = $(headId);
-    const body = $(bodyId);
-    const scoreSelect = $(scoreId);
-
-    head.addEventListener("click", () => {
-      body.classList.toggle("open");
-      // Disable score selection when model output is collapsed
-      scoreSelect.disabled = !body.classList.contains("open");
-    });
   }
 
   $("appStatus").textContent = existing
@@ -747,10 +732,12 @@ function onExport() {
   showToast('Sonuclar indirildi!', 'success');
 }
 
-function onReset() {
+async function onReset() {
   if (!STATE) { $("loginStatus").textContent = "No active user."; return; }
-  const ok = confirm(`All progress for "${STATE.user.id}" will be deleted. Continue?`);
+  const ok = confirm(`⚠️ WARNING: This will permanently delete ALL ratings and progress for "${STATE.user.id}" from both local storage and cloud.\n\nThis action cannot be undone!\n\nAre you sure you want to continue?`);
   if (!ok) return;
+
+  const userId = STATE.user.id;
 
   // Clear auto-save timer
   if (autoSaveTimer) {
@@ -758,9 +745,29 @@ function onReset() {
     autoSaveTimer = null;
   }
 
-  localStorage.removeItem(storageKey(STATE.user.id));
-  showToast('Progress deleted', 'info');
-  location.reload();
+  // Delete from Supabase
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/ratings?user_id=eq.${encodeURIComponent(userId)}`;
+    const resp = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+      }
+    });
+    if (!resp.ok) {
+      console.warn("Supabase delete failed:", resp.status);
+    }
+  } catch (err) {
+    console.warn("Supabase delete error:", err);
+  }
+
+  // Delete from localStorage
+  localStorage.removeItem(storageKey(userId));
+
+  showToast('All progress deleted from cloud and local storage', 'info');
+  setTimeout(() => location.reload(), 500);
 }
 
 function escapeHtml(s) {

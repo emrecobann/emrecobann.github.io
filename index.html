@@ -52,23 +52,6 @@
         </svg>
         <span id="userBadgeText"></span>
       </span>
-      <button id="btnExport" class="btn ghost hidden" type="button">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="7 10 12 15 17 10" />
-          <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>
-        Export
-      </button>
-      <button id="btnReset" class="btn danger hidden" type="button">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="1 4 1 10 7 10" />
-          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-        </svg>
-        Reset
-      </button>
     </div>
   </header>
 
@@ -120,8 +103,14 @@
         </summary>
         <ul>
           <li>Each dataset has <strong>10 cases</strong> to evaluate</li>
-          <li><strong>Separate score</strong> for each model output: 1 (poor) - 5 (excellent)</li>
-          <li>Model names are hidden: shown as A, B, C, D, E, F, G</li>
+          <li><strong>Rate each model</strong> from 1 (poor) to 5 (excellent) based on:</li>
+          <li style="margin-left:20px;">✓ <strong>Correctness</strong> - Clinical accuracy and appropriateness</li>
+          <li style="margin-left:20px;">✓ <strong>Alignment with GT</strong> - Similarity to ground truth impression
+          </li>
+          <li style="margin-left:20px;">✓ <strong>Conciseness</strong> - Clear and to the point</li>
+          <li style="margin-left:20px;">✓ <strong>Format Quality</strong> - Professional structure</li>
+          <li style="margin-left:20px;">✓ <strong>Hallucination</strong> - Absence of fabricated information</li>
+          <li>Model names are <strong>blinded</strong>: shown as A, B, C, D, E, F, G</li>
           <li>Ground Truth is optional: use "Show GT" to reveal</li>
         </ul>
       </details>
