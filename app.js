@@ -1,8 +1,8 @@
-/* Radiology Impression Rater v5
+/* Radiology Impression Rater v6
  * - Professional UI with improved accessibility
+ * - TWO MODES: Model Output Evaluation + Case Hardness Evaluation
  * - Everyone sees DIFFERENT cases (userId-seeded)
- * - Sample size: 10, 15, or 20
- * - Per-model scoring (1–5)
+ * - Per-model scoring (1–5) OR hardness rating (1-4)
  * - Supabase sync + localStorage backup
  *
  * Important deployment note:
@@ -19,6 +19,9 @@ const DATASETS = [
   { key: "chexpert", label: "CheXpert", file: "data/chexpert_all_predictions_final.csv" },
   { key: "mimic", label: "MIMIC-CXR", file: "data/mimic_all_predictions_final.csv" },
 ];
+
+// For hardness evaluation - uses all_data_downsample.csv with hardness labels
+const HARDNESS_DATASET = { key: "hardness_eval", label: "Hardness Evaluation", file: "data/all_data_downsampled.csv" };
 
 const MODEL_COLUMNS = [
   { key: "m1", col: "m1_7B_23K_impression", display: "M1 (Medical)" },
@@ -73,7 +76,25 @@ function loadState(userId) {
     return JSON.parse(raw);
   } catch (e) { console.warn("loadState failed", e); return null; }
 }
-function saveState(userId, state) { localStorage.setItem(storageKey(userId), JSON.stringify(state)); }
+function saveState(userId, state) {
+  // localStorage is now only a backup, primary source is Supabase
+  localStorage.setItem(storageKey(userId), JSON.stringify(state));
+}
+
+// Clear all localStorage cache on page load (force clean slate)
+function clearAllLocalStorageCache() {
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(STORAGE_PREFIX)) {
+      keys.push(key);
+    }
+  }
+  keys.forEach(key => {
+    console.log("Clearing old localStorage cache:", key);
+    localStorage.removeItem(key);
+  });
+}
 
 // ===== SUPABASE FUNCTIONS =====
 async function supabaseGet(userId) {
@@ -195,10 +216,13 @@ async function fetchCsv(file) {
 
 function normalizeRow(row) {
   const safe = {
-    id: row.id,
-    findings: row.findings ?? "",
-    indication: row.indication ?? "",
-    ground_truth: row.ground_truth ?? "",
+    // all_data_downsampled.csv uses: StudyInstanceUid, Findings, Indication, Impression, Hardness, split
+    id: row.StudyInstanceUid ?? row.id ?? row.ID ?? "",
+    findings: row.Findings ?? row.findings ?? "",
+    indication: row.Indication ?? row.indication ?? "",
+    ground_truth: row.Impression ?? row.impression ?? row.ground_truth ?? "",
+    split: row.split ?? row.Split ?? "",
+    hardness: row.Hardness ?? row.hardness ?? "",
   };
   for (const m of MODEL_COLUMNS) {
     safe[m.key] = row[m.col] ?? "";
@@ -287,17 +311,55 @@ function showToast(message, type = 'info') {
 }
 
 function init() {
+  // Clear all old localStorage cache on page load (Supabase is the only source of truth)
+  clearAllLocalStorageCache();
+
+  // Mode toggle logic
+  const modeRadios = document.getElementsByName('evalMode');
+  const modelGuide = $("modelGuide");
+  const hardnessGuide = $("hardnessGuide");
+
+  modeRadios.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      if (e.target.value === 'model') {
+        modelGuide.style.display = 'block';
+        hardnessGuide.style.display = 'none';
+        modelGuide.open = true;
+        hardnessGuide.open = false;
+      } else {
+        modelGuide.style.display = 'none';
+        hardnessGuide.style.display = 'block';
+        modelGuide.open = false;
+        hardnessGuide.open = true;
+      }
+    });
+  });
+
   $("btnStart").addEventListener("click", onStart);
   $("btnPrev").addEventListener("click", onPrev);
   $("btnSaveNext").addEventListener("click", onSaveNext);
+
+  // Hardness mode buttons (check if they exist first)
+  const btnHardnessPrev = $("btnHardnessPrev");
+  const btnHardnessSaveNext = $("btnHardnessSaveNext");
+  if (btnHardnessPrev) btnHardnessPrev.addEventListener("click", onHardnessPrev);
+  if (btnHardnessSaveNext) btnHardnessSaveNext.addEventListener("click", onHardnessSaveNext);
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (!STATE) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-    if (e.key === 'ArrowLeft' || e.key === 'p') onPrev();
-    if (e.key === 'ArrowRight' || e.key === 'n') onSaveNext();
+    // Model evaluation mode
+    if (STATE.mode === 'model') {
+      if (e.key === 'ArrowLeft' || e.key === 'p') onPrev();
+      if (e.key === 'ArrowRight' || e.key === 'n') onSaveNext();
+    }
+    // Hardness evaluation mode
+    else if (STATE.mode === 'hardness') {
+      if (e.key === 'ArrowLeft' || e.key === 'p') onHardnessPrev();
+      if (e.key === 'ArrowRight' || e.key === 'n') onHardnessSaveNext();
+    }
   });
 
   // Warn before leaving with unsaved changes
@@ -310,60 +372,209 @@ function init() {
 document.addEventListener("DOMContentLoaded", init);
 
 async function onStart() {
-  const userId = $("userId").value.trim();
-  const sampleSize = 10; // Fixed: 10 cases per dataset
+  try {
+    console.log("onStart called");
+    const userId = $("userId").value.trim();
+    const sampleSize = 10; // Fixed: 10 cases per dataset
+    const modeRadio = document.querySelector('input[name="evalMode"]:checked');
+    const selectedMode = modeRadio ? modeRadio.value : 'model';
+    console.log("Selected mode:", selectedMode, "User:", userId);
 
-  if (!userId) {
-    $("loginStatus").textContent = "⚠️ User ID is required.";
-    $("userId").focus();
-    return;
-  }
-
-  $("loginStatus").innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;">
-      <div class="spinner"></div>
-      <span>Loading...</span>
-    </div>
-  `;
-
-  // Add spinner styles
-  if (!document.querySelector('#spinner-styles')) {
-    const style = document.createElement('style');
-    style.id = 'spinner-styles';
-    style.textContent = `
-      .spinner {
-        width: 18px; height: 18px;
-        border: 2px solid rgba(90,123,181,0.2);
-        border-top-color: #5a7bb5;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-      }
-      @keyframes spin { to { transform: rotate(360deg); } }
-    `;
-    document.head.appendChild(style);
-  }
-
-  // Try to load from Supabase first, fallback to localStorage
-  let state = await supabaseGet(userId);
-  if (!state) {
-    state = loadState(userId);
-  }
-
-  if (!state) {
-    state = {
-      version: 5,
-      user: { id: userId, created_at: nowISO() },
-      config: { sample_size_per_dataset: sampleSize },
-      datasets: {},
-      audit: { last_saved_at: null, save_count: 0 },
-    };
-  } else {
-    // do NOT overwrite sample size if datasets already built (keeps consistency)
-    if (!Object.keys(state.datasets || {}).length) {
-      state.config.sample_size_per_dataset = sampleSize || state.config.sample_size_per_dataset;
+    if (!userId) {
+      $("loginStatus").textContent = "⚠️ User ID is required.";
+      $("userId").focus();
+      return;
     }
-  }
 
+    $("loginStatus").innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="spinner"></div>
+        <span>Loading...</span>
+      </div>
+    `;
+
+    // Add spinner styles
+    if (!document.querySelector('#spinner-styles')) {
+      const style = document.createElement('style');
+      style.id = 'spinner-styles';
+      style.textContent = `
+        .spinner {
+          width: 18px; height: 18px;
+          border: 2px solid rgba(90,123,181,0.2);
+          border-top-color: #5a7bb5;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `;
+      document.head.appendChild(style);
+    }
+
+    console.log("Fetching state from Supabase...");
+    // Load ONLY from Supabase (no localStorage fallback)
+    let state = await supabaseGet(userId);
+    console.log("Supabase state:", state);
+
+    if (!state) {
+      console.log("Creating new state");
+      state = {
+        version: 6,
+        mode: selectedMode,
+        user: { id: userId, created_at: nowISO() },
+        config: { sample_size_per_dataset: sampleSize },
+        datasets: {},
+        hardness_evaluation: { cases: [], cursor: 0, answers: {} },
+        audit: { last_saved_at: null, save_count: 0 },
+      };
+    } else {
+      console.log("Using existing state, updating mode to:", selectedMode);
+      // Update mode if changed
+      state.mode = selectedMode;
+      // do NOT overwrite sample size if datasets already built (keeps consistency)
+      if (!Object.keys(state.datasets || {}).length) {
+        state.config.sample_size_per_dataset = sampleSize || state.config.sample_size_per_dataset;
+      }
+      // Initialize hardness_evaluation if missing
+      if (!state.hardness_evaluation) {
+        state.hardness_evaluation = { cases: [], cursor: 0, answers: {} };
+      }
+    }
+
+    // Branch based on mode
+    console.log("Starting mode:", selectedMode);
+    if (selectedMode === 'hardness') {
+      await startHardnessMode(userId, state);
+    } else {
+      await startModelEvalMode(userId, state);
+    }
+  } catch (error) {
+    console.error("Error in onStart:", error);
+    $("loginStatus").innerHTML = `
+      <div style="color:#ff4d6d;">❌ Error: ${escapeHtml(error.message)}</div>
+      <div style="margin-top:8px;font-size:12px;color:var(--muted);">${escapeHtml(error.stack || '')}</div>
+    `;
+  }
+}
+
+async function startHardnessMode(userId, state) {
+  try {
+    console.log("Starting hardness mode, current cases:", state.hardness_evaluation.cases.length);
+    // Load hardness cases if not already loaded
+    if (state.hardness_evaluation.cases.length === 0) {
+      console.log("Loading CSV from:", HARDNESS_DATASET.file);
+      const rows = await fetchCsv(HARDNESS_DATASET.file);
+      console.log("Total CSV rows loaded:", rows.length);
+
+      const normalized = rows.map(normalizeRow);
+      console.log("Normalized rows:", normalized.length);
+
+      // Filter for train split with hardness data
+      const trainRows = normalized.filter(r => r.split === 'train' && r.hardness);
+      console.log("Train rows with hardness:", trainRows.length);
+
+      if (trainRows.length === 0) {
+        // Try without split filter - maybe split column doesn't exist or has different values
+        const rowsWithHardness = normalized.filter(r => r.hardness);
+        console.log("Rows with hardness (no split filter):", rowsWithHardness.length);
+
+        if (rowsWithHardness.length > 0) {
+          console.log("Sample row:", rowsWithHardness[0]);
+          // Use all rows with hardness
+          trainRows.length = 0;
+          trainRows.push(...rowsWithHardness);
+        } else {
+          throw new Error("No rows with hardness column found in dataset");
+        }
+      }
+
+      // Group by hardness level
+      const byHardness = { '1': [], '2': [], '3': [], '4': [] };
+      trainRows.forEach(r => {
+        const h = String(r.hardness).trim();
+        if (byHardness[h]) {
+          byHardness[h].push(r);
+        }
+      });
+
+      console.log("Grouped by hardness:", {
+        '1': byHardness['1'].length,
+        '2': byHardness['2'].length,
+        '3': byHardness['3'].length,
+        '4': byHardness['4'].length
+      });
+
+      // Deterministically select first 10 from each hardness level (sorted by ID for consistency)
+      const selectedCases = [];
+      for (const level of ['1', '2', '3', '4']) {
+        const pool = byHardness[level].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        const selected = pool.slice(0, 10); // Take first 10 (same for everyone)
+        console.log(`Selected ${selected.length} cases for hardness level ${level}`);
+        selectedCases.push(...selected);
+      }
+
+      console.log("Total selected cases before shuffle:", selectedCases.length);
+
+      // Shuffle the cases using user-specific seed (so same user sees same order)
+      const shuffleSeed = stableHash(`${userId}::hardness_order`);
+      const shuffleRnd = mulberry32(shuffleSeed);
+      for (let i = selectedCases.length - 1; i > 0; i--) {
+        const j = Math.floor(shuffleRnd() * (i + 1));
+        [selectedCases[i], selectedCases[j]] = [selectedCases[j], selectedCases[i]];
+      }
+
+      console.log("Cases shuffled for user:", userId);
+
+      // Map to hardness case structure
+      state.hardness_evaluation.cases = selectedCases.map(r => ({
+        id: String(r.id),
+        findings: r.findings,
+        indication: r.indication,
+        ground_truth: r.ground_truth,
+        hardness: r.hardness, // System's assigned hardness
+      }));
+
+      state.hardness_evaluation.cursor = 0;
+      state.hardness_evaluation.answers = {};
+    }
+
+    saveState(userId, state);
+    STATE = state;
+
+    setHidden($("screenLogin"), true);
+    setHidden($("screenApp"), true);
+    setHidden($("screenHardness"), false);
+    setHidden($("userBadge"), false);
+
+    // Update user badge
+    const badgeText = $("userBadgeText");
+    if (badgeText) {
+      badgeText.textContent = STATE.user.id;
+    } else {
+      $("userBadge").textContent = `user: ${STATE.user.id}`;
+    }
+
+    renderHardnessCase();
+    $("loginStatus").textContent = "";
+
+    // Start auto-save timer
+    if (autoSaveTimer) clearInterval(autoSaveTimer);
+    autoSaveTimer = setInterval(() => {
+      if (STATE) {
+        saveState(STATE.user.id, STATE);
+        console.log('Auto-saved at', nowISO());
+      }
+    }, AUTO_SAVE_INTERVAL);
+
+    showToast(`Welcome to Hardness Evaluation, ${STATE.user.id}!`, 'success');
+  } catch (e) {
+    console.error("Hardness mode error:", e);
+    $("loginStatus").innerHTML =
+      `<div style="color:#ff4d6d;">❌ Hardness data loading error</div>
+      <div style="margin-top:8px;color:var(--muted);">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function startModelEvalMode(userId, state) {
   try {
     for (const ds of DATASETS) {
       if (state.datasets[ds.key]?.cases?.length) continue;
@@ -508,6 +719,8 @@ function renderCase() {
   order.forEach((k, idx) => labelMap[k] = String.fromCharCode("A".charCodeAt(0) + idx));
 
   const existing = d.answers[caseId] || null;
+  console.log("Rendering case:", caseId, "Existing answer:", existing);
+  console.log("All answers for dataset:", ACTIVE_DATASET, d.answers);
 
   $("caseCard").innerHTML = `
     <div class="case-grid">
@@ -646,6 +859,9 @@ async function onSaveNext() {
   STATE.audit.last_saved_at = nowISO();
   STATE.audit.save_count = (STATE.audit.save_count || 0) + 1;
 
+  console.log("Saved answer for case:", ans.case_id, "Answer:", ans);
+  console.log("All answers now:", d.answers);
+
   // Save to localStorage first (backup)
   try {
     saveState(STATE.user.id, STATE);
@@ -772,6 +988,151 @@ async function onReset() {
 
   showToast('All progress deleted from cloud and local storage', 'info');
   setTimeout(() => location.reload(), 500);
+}
+
+
+// ===== HARDNESS EVALUATION MODE =====
+
+function renderHardnessCase() {
+  const h = STATE.hardness_evaluation;
+  const total = h.cases.length;
+  if (!total) {
+    $("hardnessCard").innerHTML = `<div class="panel">No hardness cases loaded.</div>`;
+    return;
+  }
+
+  const idx = h.cursor || 0;
+  if (h.cursor < 0) h.cursor = 0;
+  if (h.cursor >= total) h.cursor = total - 1;
+
+  const c = h.cases[idx];
+  const caseId = c.id;
+  const existing = h.answers[caseId];
+
+  // Update progress
+  const done = Object.keys(h.answers).length;
+  $("hardnessProgressText").textContent = `${done}/${total} completed`;
+  const pct = Math.round((done / total) * 100);
+  $("hardnessProgressFill").style.width = `${pct}%`;
+
+  // Render case card
+  $("hardnessCard").innerHTML = `
+    <div class="panel">
+      <div style="margin-bottom:16px;">
+        <div style="color:var(--muted);font-size:12px;margin-bottom:4px;">Case ${idx + 1}/${total} (ID: ${escapeHtml(caseId)})</div>
+        <div style="font-size:13px;color:var(--accent);margin-bottom:4px;">System Assigned: <strong>Level ${escapeHtml(c.hardness)}</strong></div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">Indication</div>
+        <div style="line-height:1.6;">${escapeHtml(c.indication || "[EMPTY]")}</div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">Findings</div>
+        <div style="line-height:1.6;">${escapeHtml(c.findings || "[EMPTY]")}</div>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">Ground Truth Impression</div>
+        <div style="line-height:1.6;color:var(--accent);">${escapeHtml(c.ground_truth || "[EMPTY]")}</div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:8px;">Your Hardness Rating (1-4):</label>
+        <select id="hardnessRating" style="width:100%;padding:10px;font-size:14px;background:var(--bg-secondary);border:1px solid var(--border);color:var(--text);border-radius:8px;">
+          <option value="" ${!existing ? "selected" : ""}>Select reasoning complexity...</option>
+          <option value="1" ${existing?.hardness === "1" ? "selected" : ""}>1 - Trivial (straightforward, no ambiguity)</option>
+          <option value="2" ${existing?.hardness === "2" ? "selected" : ""}>2 - Simple (few findings, direct mapping)</option>
+          <option value="3" ${existing?.hardness === "3" ? "selected" : ""}>3 - Moderate (multiple findings OR ambiguity)</option>
+          <option value="4" ${existing?.hardness === "4" ? "selected" : ""}>4 - Hard (complex reasoning, nuanced)</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:8px;">Optional Comment:</label>
+        <textarea id="hardnessComment" rows="3" placeholder="Any notes about this case..." style="width:100%;padding:10px;font-size:13px;background:var(--bg-secondary);border:1px solid var(--border);color:var(--text);border-radius:8px;resize:vertical;">${escapeHtml(existing?.comment || "")}</textarea>
+      </div>
+    </div>
+  `;
+
+  $("hardnessStatus").textContent = existing
+    ? `✅ Previously saved (${existing.saved_at.slice(0, 16).replace('T', ' ')}). You can edit and save again.`
+    : `Not yet saved. Select hardness and click "Save & Next".`;
+}
+
+function collectHardnessAnswer() {
+  const h = STATE.hardness_evaluation;
+  const c = h.cases[h.cursor];
+  const caseId = c.id;
+
+  const rating = document.getElementById("hardnessRating")?.value || "";
+  const comment = document.getElementById("hardnessComment")?.value || "";
+
+  return {
+    case_id: caseId,
+    system_hardness: c.hardness, // Original system assignment
+    hardness: rating, // User's rating
+    comment,
+    saved_at: nowISO(),
+  };
+}
+
+function validateHardnessAnswer(ans) {
+  if (!ans.hardness || ans.hardness === "") {
+    return "Please select a hardness level (1-4).";
+  }
+  return null;
+}
+
+async function onHardnessSaveNext() {
+  const ans = collectHardnessAnswer();
+  const err = validateHardnessAnswer(ans);
+  if (err) {
+    $("hardnessStatus").textContent = `❌ ${err}`;
+    showToast(err, 'error');
+    return;
+  }
+
+  const h = STATE.hardness_evaluation;
+  h.answers[ans.case_id] = ans;
+
+  // Save to localStorage
+  try {
+    saveState(STATE.user.id, STATE);
+  } catch (e) {
+    console.error('LocalStorage save failed:', e);
+  }
+
+  // Save to Supabase
+  const synced = await supabaseSave(STATE.user.id, STATE);
+  if (synced) {
+    showToast('Saved to cloud!', 'success');
+  } else {
+    showToast('Saved locally (cloud sync failed)', 'warning');
+  }
+
+  const done = Object.keys(h.answers).length;
+  const total = h.cases.length;
+  $("hardnessStatus").textContent = `✅ Saved (${done}/${total} completed)`;
+
+  if (h.cursor < total - 1) {
+    h.cursor += 1;
+    renderHardnessCase();
+  } else {
+    $("hardnessStatus").textContent = "🎉 All hardness cases completed!";
+    showToast('Congratulations! All hardness evaluations completed!', 'success');
+  }
+}
+
+function onHardnessPrev() {
+  const h = STATE.hardness_evaluation;
+  if (h.cursor > 0) {
+    h.cursor -= 1;
+    renderHardnessCase();
+  } else {
+    $("hardnessStatus").textContent = "Already at the first case.";
+  }
 }
 
 function escapeHtml(s) {
