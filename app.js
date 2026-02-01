@@ -509,7 +509,6 @@ function renderCase() {
 
   const existing = d.answers[caseId] || null;
 
-  const gtToggleId = "toggle_gt";
   $("caseCard").innerHTML = `
     <div class="case-grid">
       <div class="panel">
@@ -517,16 +516,6 @@ function renderCase() {
         <div class="kv"><div class="k">Dataset</div><div class="v">${escapeHtml(ACTIVE_DATASET)}</div></div>
         <div class="kv"><div class="k">Indication</div><div class="v">${escapeHtml(c.indication || "-")}</div></div>
         <div class="kv"><div class="k">Findings</div><div class="v">${escapeHtml(c.findings || "-")}</div></div>
-
-        <div class="kv">
-          <div class="k">
-            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-              <input type="checkbox" id="${gtToggleId}" ${existing?.show_gt ? "checked" : ""} style="width:18px;height:18px;accent-color:#5a7bb5;"/>
-              <span>Show Ground Truth</span>
-            </label>
-          </div>
-          <div class="v" id="gt_block" style="display:${existing?.show_gt ? "block" : "none"};padding:12px;background:rgba(90,155,109,0.1);border-radius:8px;border:1px solid rgba(90,155,109,0.3);margin-top:8px;">${escapeHtml(c.ground_truth || "-")}</div>
-        </div>
 
         <div class="kv">
           <div class="k">Comment (optional)</div>
@@ -540,10 +529,6 @@ function renderCase() {
       </div>
     </div>
   `;
-
-  const gtToggle = $(gtToggleId);
-  const gtBlock = $("gt_block");
-  gtToggle.addEventListener("change", () => { gtBlock.style.display = gtToggle.checked ? "block" : "none"; });
 
   const outEl = $("outputs");
   outEl.innerHTML = "";
@@ -561,7 +546,7 @@ function renderCase() {
     card.innerHTML = `
       <div class="output-head" id="${headId}">
         <div class="output-title" style="font-weight:600;font-size:1.05em;">Model ${label}</div>
-        <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Score" style="min-width:90px;font-weight:500;">
+        <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Score" style="min-width:90px;font-weight:500;" disabled>
           <option value="" ${!existingScore ? "selected" : ""}>Rate...</option>
           <option value="5" ${existingScore === "5" ? "selected" : ""}>⭐ 5</option>
           <option value="4" ${existingScore === "4" ? "selected" : ""}>⭐ 4</option>
@@ -570,11 +555,21 @@ function renderCase() {
           <option value="1" ${existingScore === "1" ? "selected" : ""}>⭐ 1</option>
         </select>
       </div>
-      <div class="output-body" id="${bodyId}" style="display:block;">
+      <div class="output-body" id="${bodyId}">
         <div class="output-text" style="line-height:1.6;">${escapeHtml(outputText || "[EMPTY]")}</div>
       </div>
     `;
     outEl.appendChild(card);
+
+    const head = $(headId);
+    const body = $(bodyId);
+    const scoreSelect = $(scoreId);
+
+    // Toggle model output on click
+    head.addEventListener("click", () => {
+      const isOpen = body.classList.toggle("open");
+      scoreSelect.disabled = !isOpen;
+    });
   }
 
   $("appStatus").textContent = existing
