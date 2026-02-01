@@ -652,20 +652,56 @@ async function startModelEvalMode(userId, state) {
 }
 
 function renderTabs() {
-  const el = $("datasetTabs");
-  el.innerHTML = "";
+  // Dataset tabs removed - no longer needed
+}
+
+// Get all cases from all datasets in order
+function getAllCases() {
+  const allCases = [];
   for (const ds of DATASETS) {
-    const b = document.createElement("div");
-    b.className = "tab" + (ds.key === ACTIVE_DATASET ? " active" : "");
-    b.textContent = ds.label;
-    b.addEventListener("click", () => {
-      ACTIVE_DATASET = ds.key;
-      ACTIVE_INDEX = STATE.datasets[ACTIVE_DATASET].cursor || 0;
-      renderTabs();
-      renderCase();
-    });
-    el.appendChild(b);
+    const d = STATE.datasets[ds.key];
+    if (d && d.cases) {
+      d.cases.forEach(c => {
+        allCases.push({
+          ...c,
+          _dataset: ds.key, // Store original dataset
+          _globalId: `${ds.key}::${c.id}` // Unique global ID
+        });
+      });
+    }
   }
+  return allCases;
+}
+
+// Get global cursor position across all datasets
+function getGlobalCursor() {
+  let cursor = 0;
+  for (const ds of DATASETS) {
+    if (ds.key === ACTIVE_DATASET) {
+      cursor += ACTIVE_INDEX;
+      break;
+    }
+    cursor += STATE.datasets[ds.key].cases.length;
+  }
+  return cursor;
+}
+
+// Set cursor from global position
+function setGlobalCursor(globalIdx) {
+  let remaining = globalIdx;
+  for (const ds of DATASETS) {
+    const len = STATE.datasets[ds.key].cases.length;
+    if (remaining < len) {
+      ACTIVE_DATASET = ds.key;
+      ACTIVE_INDEX = remaining;
+      return;
+    }
+    remaining -= len;
+  }
+  // If we reach here, set to last case
+  const lastDs = DATASETS[DATASETS.length - 1];
+  ACTIVE_DATASET = lastDs.key;
+  ACTIVE_INDEX = STATE.datasets[ACTIVE_DATASET].cases.length - 1;
 }
 
 function computeOverallProgress() {
@@ -758,39 +794,61 @@ function renderCase() {
     card.className = "output";
     card.innerHTML = `
       <div class="output-head" id="${headId}">
-        <div class="output-title" style="font-weight:600;font-size:1.05em;">Model ${label}</div>
-        <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Score" style="min-width:90px;font-weight:500;" disabled>
-          <option value="" ${!existingScore ? "selected" : ""}>Rate...</option>
-          <option value="5" ${existingScore === "5" ? "selected" : ""}>⭐ 5</option>
-          <option value="4" ${existingScore === "4" ? "selected" : ""}>⭐ 4</option>
-          <option value="3" ${existingScore === "3" ? "selected" : ""}>⭐ 3</option>
-          <option value="2" ${existingScore === "2" ? "selected" : ""}>⭐ 2</option>
-          <option value="1" ${existingScore === "1" ? "selected" : ""}>⭐ 1</option>
-        </select>
+        <div class="output-title" style="font-weight:600;font-size:1.05em;">
+          Model ${label}
+          <span id="rating_badge_${modelKey}" style="margin-left:8px;color:var(--accent);font-size:0.95em;">${existingScore ? `⭐ ${existingScore}` : ''}</span>
+        </div>
       </div>
       <div class="output-body" id="${bodyId}">
-        <div class="output-text" style="line-height:1.6;">${escapeHtml(outputText || "[EMPTY]")}</div>
+        <div class="output-text" style="line-height:1.6;margin-bottom:16px;">${escapeHtml(outputText || "[EMPTY]")}</div>
+        <div class="rating-row" style="display:flex;align-items:center;gap:12px;">
+          <span style="font-weight:600;font-size:13px;">Rating:</span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="score_${modelKey}" value="1" ${existingScore === "1" ? "checked" : ""}> 1
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="score_${modelKey}" value="2" ${existingScore === "2" ? "checked" : ""}> 2
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="score_${modelKey}" value="3" ${existingScore === "3" ? "checked" : ""}> 3
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="score_${modelKey}" value="4" ${existingScore === "4" ? "checked" : ""}> 4
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="score_${modelKey}" value="5" ${existingScore === "5" ? "checked" : ""}> 5
+          </label>
+        </div>
       </div>
     `;
     outEl.appendChild(card);
 
     const head = $(headId);
     const body = $(bodyId);
-    const scoreSelect = $(scoreId);
+    const badge = $(`rating_badge_${modelKey}`);
 
-    // Prevent dropdown clicks from closing the card
-    scoreSelect.addEventListener("click", (e) => {
-      e.stopPropagation();
+    // Toggle model output on click - close others (accordion behavior)
+    head.addEventListener("click", () => {
+      const wasOpen = body.classList.contains("open");
+
+      // Close all other models
+      document.querySelectorAll('.output-body').forEach(b => {
+        if (b !== body) b.classList.remove("open");
+      });
+
+      // Toggle this one
+      if (!wasOpen) {
+        body.classList.add("open");
+      }
     });
 
-    // Toggle model output on click (but not when clicking dropdown)
-    head.addEventListener("click", (e) => {
-      // Don't toggle if clicking on the select element
-      if (e.target === scoreSelect || scoreSelect.contains(e.target)) {
-        return;
-      }
-      const isOpen = body.classList.toggle("open");
-      scoreSelect.disabled = !isOpen;
+    // Update badge when radio button changes
+    document.querySelectorAll(`input[name="score_${modelKey}"]`).forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        if (badge) {
+          badge.textContent = `⭐ ${e.target.value}`;
+        }
+      });
     });
   }
 
@@ -804,13 +862,12 @@ function collectAnswer() {
   const c = d.cases[ACTIVE_INDEX];
   const caseId = c.id;
 
-  // Collect per-model scores
+  // Collect per-model scores from radio buttons
   const modelScores = {};
-  document.querySelectorAll('.model-score').forEach(sel => {
-    const modelKey = sel.dataset.model;
-    const val = sel.value;
-    if (modelKey && val) {
-      modelScores[modelKey] = val;
+  MODEL_COLUMNS.forEach(m => {
+    const radio = document.querySelector(`input[name="score_${m.key}"]:checked`);
+    if (radio) {
+      modelScores[m.key] = radio.value;
     }
   });
 
@@ -881,33 +938,40 @@ async function onSaveNext() {
   const { totalAll, doneAll } = computeOverallProgress();
   $("appStatus").textContent = `✅ Saved (${doneAll}/${totalAll} completed)`;
 
+  // Move to next case (automatically switch datasets if needed)
   if (ACTIVE_INDEX < d.cases.length - 1) {
     ACTIVE_INDEX += 1;
     renderCase();
   } else {
-    const next = DATASETS.find(ds => {
-      const x = STATE.datasets[ds.key];
-      return Object.keys(x.answers).length < x.cases.length;
-    });
-    if (next) {
-      ACTIVE_DATASET = next.key;
-      ACTIVE_INDEX = STATE.datasets[ACTIVE_DATASET].cursor || 0;
-      renderTabs(); renderCase();
-      showToast(`Switched to ${next.label} dataset`, 'info');
+    // End of current dataset, move to next dataset
+    const currentIdx = DATASETS.findIndex(ds => ds.key === ACTIVE_DATASET);
+    if (currentIdx < DATASETS.length - 1) {
+      ACTIVE_DATASET = DATASETS[currentIdx + 1].key;
+      ACTIVE_INDEX = 0;
+      renderCase();
     } else {
-      $("appStatus").textContent = "🎉 All datasets completed! Use Export to download results.";
+      $("appStatus").textContent = "🎉 All cases completed!";
       showToast('Congratulations! All cases completed!', 'success');
     }
   }
 }
 
 function onPrev() {
+  // Move to previous case (automatically switch datasets if needed)
   const d = STATE.datasets[ACTIVE_DATASET];
   if (ACTIVE_INDEX > 0) {
     ACTIVE_INDEX -= 1;
     renderCase();
   } else {
-    $("appStatus").textContent = "Already at the first case in this dataset.";
+    // At beginning of current dataset, move to previous dataset
+    const currentIdx = DATASETS.findIndex(ds => ds.key === ACTIVE_DATASET);
+    if (currentIdx > 0) {
+      ACTIVE_DATASET = DATASETS[currentIdx - 1].key;
+      ACTIVE_INDEX = STATE.datasets[ACTIVE_DATASET].cases.length - 1;
+      renderCase();
+    } else {
+      $("appStatus").textContent = "Already at the first case.";
+    }
   }
 }
 
@@ -1039,14 +1103,37 @@ function renderHardnessCase() {
       </div>
 
       <div style="margin-bottom:12px;">
-        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:8px;">Your Hardness Rating (1-4):</label>
-        <select id="hardnessRating" style="width:100%;padding:10px;font-size:14px;background:var(--bg-secondary);border:1px solid var(--border);color:var(--text);border-radius:8px;">
-          <option value="" ${!existing ? "selected" : ""}>Select reasoning complexity...</option>
-          <option value="1" ${existing?.hardness === "1" ? "selected" : ""}>1 - Trivial (straightforward, no ambiguity)</option>
-          <option value="2" ${existing?.hardness === "2" ? "selected" : ""}>2 - Simple (few findings, direct mapping)</option>
-          <option value="3" ${existing?.hardness === "3" ? "selected" : ""}>3 - Moderate (multiple findings OR ambiguity)</option>
-          <option value="4" ${existing?.hardness === "4" ? "selected" : ""}>4 - Hard (complex reasoning, nuanced)</option>
-        </select>
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:10px;">Your Hardness Rating (1-4):</label>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="hardnessRating" value="1" ${existing?.hardness === "1" ? "checked" : ""} style="margin-top:2px;width:16px;height:16px;accent-color:#5a7bb5;flex-shrink:0;" />
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:1px;">1 - Trivial</div>
+              <div style="font-size:11px;color:var(--muted);">straightforward, no ambiguity</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="hardnessRating" value="2" ${existing?.hardness === "2" ? "checked" : ""} style="margin-top:2px;width:16px;height:16px;accent-color:#5a7bb5;flex-shrink:0;" />
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:1px;">2 - Simple</div>
+              <div style="font-size:11px;color:var(--muted);">few findings, direct mapping</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="hardnessRating" value="3" ${existing?.hardness === "3" ? "checked" : ""} style="margin-top:2px;width:16px;height:16px;accent-color:#5a7bb5;flex-shrink:0;" />
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:1px;">3 - Moderate</div>
+              <div style="font-size:11px;color:var(--muted);">multiple findings OR ambiguity</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="hardnessRating" value="4" ${existing?.hardness === "4" ? "checked" : ""} style="margin-top:2px;width:16px;height:16px;accent-color:#5a7bb5;flex-shrink:0;" />
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:1px;">4 - Hard</div>
+              <div style="font-size:11px;color:var(--muted);">complex reasoning, nuanced</div>
+            </div>
+          </label>
+        </div>
       </div>
 
       <div style="margin-bottom:12px;">
@@ -1066,7 +1153,8 @@ function collectHardnessAnswer() {
   const c = h.cases[h.cursor];
   const caseId = c.id;
 
-  const rating = document.getElementById("hardnessRating")?.value || "";
+  const radioSelected = document.querySelector('input[name="hardnessRating"]:checked');
+  const rating = radioSelected ? radioSelected.value : "";
   const comment = document.getElementById("hardnessComment")?.value || "";
 
   return {
