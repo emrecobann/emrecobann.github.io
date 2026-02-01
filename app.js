@@ -1,12 +1,13 @@
-/* Radiology Impression Rater v3
- * - Everyone sees DIFFERENT cases (userId-seeded). No sampling-mode selector in UI.
- * - Sample size selectable 10..20.
- * - Single overall score (1–5) per case.
- * - Offline-first: localStorage + optional remote POST endpoint
+/* Radiology Impression Rater v4
+ * - Professional UI with improved accessibility
+ * - Everyone sees DIFFERENT cases (userId-seeded)
+ * - Sample size: 10, 15, or 20
+ * - Single overall score (1–5) per case
+ * - Offline-first: localStorage with auto-save
  *
  * Important deployment note:
- * - Must be served over http(s) (GitHub Pages).
- * - Opening index.html via file:// will cause fetch() to fail.
+ * - Must be served over http(s) (GitHub Pages)
+ * - Opening index.html via file:// will cause fetch() to fail
  */
 
 const DATASETS = [
@@ -25,7 +26,8 @@ const MODEL_COLUMNS = [
   { key: "qwen14b_rl", col: "qwen3_14b_lora_rl_impression", display: "Qwen3-14B (SFT+RL)" },
 ];
 
-const STORAGE_PREFIX = "rad_rater_v3";
+const STORAGE_PREFIX = "rad_rater_v4";
+const AUTO_SAVE_INTERVAL = 30000; // 30 seconds
 
 function $(id) { return document.getElementById(id); }
 
@@ -122,6 +124,67 @@ function buildBlindedOrder(userId, datasetKey, caseId) {
 let STATE = null;
 let ACTIVE_DATASET = null;
 let ACTIVE_INDEX = 0;
+let autoSaveTimer = null;
+
+// Show toast notification
+function showToast(message, type = 'info') {
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      ${type === 'success' ? '<polyline points="20 6 9 17 4 12"/>' :
+      type === 'error' ? '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>' :
+        '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'}
+    </svg>
+    <span>${message}</span>
+  `;
+  document.body.appendChild(toast);
+
+  // Add toast styles if not exists
+  if (!document.querySelector('#toast-styles')) {
+    const style = document.createElement('style');
+    style.id = 'toast-styles';
+    style.textContent = `
+      .toast {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%) translateY(100px);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 20px;
+        border-radius: 12px;
+        background: rgba(20, 25, 40, 0.95);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255,255,255,0.1);
+        color: #eaf0ff;
+        font-size: 14px;
+        font-weight: 500;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+        z-index: 9999;
+        animation: toastIn 0.3s ease forwards;
+      }
+      .toast-success { border-color: rgba(43, 228, 167, 0.4); }
+      .toast-success svg { color: #2be4a7; }
+      .toast-error { border-color: rgba(255, 77, 109, 0.4); }
+      .toast-error svg { color: #ff4d6d; }
+      .toast-info svg { color: #8b7bff; }
+      @keyframes toastIn {
+        to { transform: translateX(-50%) translateY(0); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  setTimeout(() => {
+    toast.style.animation = 'toastIn 0.3s ease reverse forwards';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
 
 function init() {
   // populate sample size: only 10, 15, 20
@@ -131,7 +194,7 @@ function init() {
   for (const n of allowedSizes) {
     const opt = document.createElement("option");
     opt.value = String(n);
-    opt.textContent = String(n);
+    opt.textContent = `${n} vaka`;
     if (n === 15) opt.selected = true;
     sel.appendChild(opt);
   }
@@ -141,35 +204,69 @@ function init() {
   $("btnSaveNext").addEventListener("click", onSaveNext);
   $("btnExport").addEventListener("click", onExport);
   $("btnReset").addEventListener("click", onReset);
-  // Hide remote endpoint field if present (for safety)
-  const remoteField = document.getElementById("remoteEndpoint");
-  if (remoteField) remoteField.parentElement.style.display = "none";
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (!STATE) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    if (e.key === 'ArrowLeft' || e.key === 'p') onPrev();
+    if (e.key === 'ArrowRight' || e.key === 'n') onSaveNext();
+  });
+
+  // Warn before leaving with unsaved changes
+  window.addEventListener('beforeunload', (e) => {
+    if (STATE) {
+      saveState(STATE.user.id, STATE);
+    }
+  });
 }
 document.addEventListener("DOMContentLoaded", init);
 
 async function onStart() {
   const userId = $("userId").value.trim();
-  const userMeta = $("userMeta").value.trim();
   const sampleSize = parseInt($("sampleSize").value, 10);
 
   if (!userId) {
-    $("loginStatus").textContent = "⚠️ Kullanıcı ID gerekli.";
+    $("loginStatus").textContent = "⚠️ Kullanici ID gerekli.";
+    $("userId").focus();
     return;
   }
 
-  $("loginStatus").textContent = "Loading datasets…";
+  $("loginStatus").innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="spinner"></div>
+      <span>Datasetler yukleniyor...</span>
+    </div>
+  `;
+
+  // Add spinner styles
+  if (!document.querySelector('#spinner-styles')) {
+    const style = document.createElement('style');
+    style.id = 'spinner-styles';
+    style.textContent = `
+      .spinner {
+        width: 18px; height: 18px;
+        border: 2px solid rgba(139,123,255,0.2);
+        border-top-color: #8b7bff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    `;
+    document.head.appendChild(style);
+  }
 
   let state = loadState(userId);
   if (!state) {
     state = {
-      version: 3,
-      user: { id: userId, meta: userMeta, created_at: nowISO() },
+      version: 4,
+      user: { id: userId, created_at: nowISO() },
       config: { sample_size_per_dataset: sampleSize },
       datasets: {},
-      audit: { last_saved_at: null },
+      audit: { last_saved_at: null, save_count: 0 },
     };
   } else {
-    state.user.meta = userMeta || state.user.meta || "";
     // do NOT overwrite sample size if datasets already built (keeps consistency)
     if (!Object.keys(state.datasets || {}).length) {
       state.config.sample_size_per_dataset = sampleSize || state.config.sample_size_per_dataset;
@@ -214,22 +311,42 @@ async function onStart() {
     setHidden($("btnExport"), false);
     setHidden($("btnReset"), false);
     setHidden($("userBadge"), false);
-    $("userBadge").textContent = `user: ${STATE.user.id}`;
+
+    // Update user badge with new structure
+    const badgeText = $("userBadgeText");
+    if (badgeText) {
+      badgeText.textContent = STATE.user.id;
+    } else {
+      $("userBadge").textContent = `user: ${STATE.user.id}`;
+    }
 
     renderTabs();
     renderCase();
     $("loginStatus").textContent = "";
+
+    // Start auto-save timer
+    if (autoSaveTimer) clearInterval(autoSaveTimer);
+    autoSaveTimer = setInterval(() => {
+      if (STATE) {
+        saveState(STATE.user.id, STATE);
+        console.log('Auto-saved at', nowISO());
+      }
+    }, AUTO_SAVE_INTERVAL);
+
+    showToast(`Hosgeldin, ${STATE.user.id}!`, 'success');
   } catch (e) {
     console.error(e);
-    $("loginStatus").textContent =
-      `❌ Dataset load failed.\n` +
-      `Hata: ${e.message}\n\n` +
-      `Kontrol listesi:\n` +
-      `• index.html repo root’ta mı?\n` +
-      `• data/ klasörü repo root’ta mı?\n` +
-      `• Dosya isimleri birebir aynı mı? (case-sensitive)\n` +
-      `• Siteyi https://emrecobann.github.io üzerinden mi açtın? (file:// değil)\n` +
-      `• İlk açılışta 1-2 dk cache/Pages deploy beklemen gerekebilir.`;
+    $("loginStatus").innerHTML =
+      `<div style="color:#ff4d6d;">❌ Dataset yukleme hatasi</div>
+      <div style="margin-top:8px;color:var(--muted);">Hata: ${escapeHtml(e.message)}</div>
+      <div style="margin-top:12px;padding:12px;background:rgba(0,0,0,0.2);border-radius:8px;font-size:12px;">
+        <strong>Kontrol listesi:</strong><br>
+        • Siteyi <code>https://emrecobann.github.io</code> uzerinden mi actin?<br>
+        • <code>file://</code> ile acildiginda fetch() calismaz<br>
+        • index.html repo root'ta mi?<br>
+        • data/ klasoru repo root'ta mi?<br>
+        • Ilk acilista 1-2 dk cache/Pages deploy beklemen gerekebilir
+      </div>`;
   }
 }
 
@@ -268,9 +385,15 @@ function renderProgress() {
   const done = Object.keys(d.answers || {}).length;
   const { totalAll, doneAll } = computeOverallProgress();
 
-  $("progressText").textContent = `${doneAll}/${totalAll} (this dataset: ${done}/${total})`;
+  $("progressText").textContent = `${doneAll}/${totalAll} (bu dataset: ${done}/${total})`;
   const pct = totalAll ? Math.round((doneAll / totalAll) * 100) : 0;
   $("progressFill").style.width = `${pct}%`;
+
+  // Update ARIA attributes for accessibility
+  const progressEl = document.querySelector('.progress');
+  if (progressEl) {
+    progressEl.setAttribute('aria-valuenow', pct);
+  }
 }
 
 function renderCase() {
@@ -300,46 +423,32 @@ function renderCase() {
   $("caseCard").innerHTML = `
     <div class="case-grid">
       <div class="panel">
-        <h2>Case</h2>
+        <h2>Vaka Bilgileri</h2>
         <div class="kv"><div class="k">Dataset</div><div class="v">${escapeHtml(ACTIVE_DATASET)}</div></div>
-        <div class="kv"><div class="k">Case ID</div><div class="v">${escapeHtml(caseId)}</div></div>
-        <div class="kv"><div class="k">Indication</div><div class="v">${escapeHtml(c.indication || "")}</div></div>
-        <div class="kv"><div class="k">Findings</div><div class="v">${escapeHtml(c.findings || "")}</div></div>
+        <div class="kv"><div class="k">Vaka ID</div><div class="v">${escapeHtml(caseId)}</div></div>
+        <div class="kv"><div class="k">Endikasyon</div><div class="v">${escapeHtml(c.indication || "-")}</div></div>
+        <div class="kv"><div class="k">Bulgular</div><div class="v">${escapeHtml(c.findings || "-")}</div></div>
 
         <div class="kv">
           <div class="k">
-            <label style="display:flex;align-items:center;gap:10px;">
-              <input type="checkbox" id="${gtToggleId}" ${existing?.show_gt ? "checked" : ""}/>
-              Show GT Impression
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+              <input type="checkbox" id="${gtToggleId}" ${existing?.show_gt ? "checked" : ""} style="width:18px;height:18px;accent-color:#8b7bff;"/>
+              <span>Ground Truth Goster</span>
             </label>
           </div>
-          <div class="v" id="gt_block" style="display:${existing?.show_gt ? "block" : "none"}">${escapeHtml(c.ground_truth || "")}</div>
+          <div class="v" id="gt_block" style="display:${existing?.show_gt ? "block" : "none"};padding:12px;background:rgba(43,228,167,0.08);border-radius:8px;border:1px solid rgba(43,228,167,0.2);margin-top:8px;">${escapeHtml(c.ground_truth || "-")}</div>
         </div>
 
         <div class="kv">
-          <div class="k">Optional comment</div>
-          <textarea id="comment" class="input" rows="3" placeholder="Kısa not…" style="resize:vertical;">${escapeHtml(existing?.comment || "")}</textarea>
+          <div class="k">Yorum (opsiyonel)</div>
+          <textarea id="comment" class="input" rows="3" placeholder="Kisa not veya aciklama..." style="resize:vertical;">${escapeHtml(existing?.comment || "")}</textarea>
         </div>
       </div>
 
       <div class="panel">
-        <h2>Model Outputs (Blinded)</h2>
+        <h2>Model Ciktilari (Kor)</h2>
+        <p class="help" style="margin-bottom:16px;">Her model ciktisi icin 1-5 arasi skor verin. Klinik dogruluk temel kriterdir.</p>
         <div class="outputs" id="outputs"></div>
-
-        <div class="scorebox">
-          <div class="score-row">
-            <label style="color:var(--muted);font-size:12px;min-width:110px;">Overall Score</label>
-            <select class="small" id="overall_score">
-              <option value="" ${existing?.overall_score ? "" : "selected"}>—</option>
-              <option value="1" ${existing?.overall_score === "1" ? "selected" : ""}>1 (bad)</option>
-              <option value="2" ${existing?.overall_score === "2" ? "selected" : ""}>2</option>
-              <option value="3" ${existing?.overall_score === "3" ? "selected" : ""}>3</option>
-              <option value="4" ${existing?.overall_score === "4" ? "selected" : ""}>4</option>
-              <option value="5" ${existing?.overall_score === "5" ? "selected" : ""}>5 (excellent)</option>
-            </select>
-          </div>
-          <div class="help">Klinik doğruluk + relevance temel kriter. Dil akıcılığı ikincil.</div>
-        </div>
       </div>
     </div>
   `;
@@ -353,16 +462,25 @@ function renderCase() {
   for (const modelKey of order) {
     const label = labelMap[modelKey];
     const outputText = (c.models[modelKey] || "").trim();
+    const existingScore = existing?.model_scores?.[modelKey] || "";
 
     const headId = `head_${modelKey}`;
     const bodyId = `body_${modelKey}`;
+    const scoreId = `score_${modelKey}`;
 
     const card = document.createElement("div");
     card.className = "output";
     card.innerHTML = `
       <div class="output-head" id="${headId}">
         <div class="output-title">Model ${label}</div>
-        <div class="output-meta">${escapeHtml(modelKey)}</div>
+        <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Skoru" onclick="event.stopPropagation()">
+          <option value="" ${!existingScore ? "selected" : ""}>Skor...</option>
+          <option value="1" ${existingScore === "1" ? "selected" : ""}>1</option>
+          <option value="2" ${existingScore === "2" ? "selected" : ""}>2</option>
+          <option value="3" ${existingScore === "3" ? "selected" : ""}>3</option>
+          <option value="4" ${existingScore === "4" ? "selected" : ""}>4</option>
+          <option value="5" ${existingScore === "5" ? "selected" : ""}>5</option>
+        </select>
       </div>
       <div class="output-body ${existing?.open_model === modelKey ? "open" : ""}" id="${bodyId}">
         <div class="output-text">${escapeHtml(outputText || "[EMPTY]")}</div>
@@ -380,8 +498,8 @@ function renderCase() {
   }
 
   $("appStatus").textContent = existing
-    ? `✅ Saved already. You can edit and Save again. (Saved at: ${existing.saved_at})`
-    : `Not saved yet.`;
+    ? `✅ Daha once kaydedildi (${existing.saved_at.slice(0, 16).replace('T', ' ')}). Duzenleyip tekrar kaydedebilirsin.`
+    : `Henuz kaydedilmedi. Skor secip "Kaydet ve Ileri" tikla.`;
 
   if (!existing) {
     const firstBody = document.querySelector(".output-body");
@@ -394,7 +512,16 @@ function collectAnswer() {
   const c = d.cases[ACTIVE_INDEX];
   const caseId = c.id;
 
-  const overall = document.getElementById("overall_score")?.value || "";
+  // Collect per-model scores
+  const modelScores = {};
+  document.querySelectorAll('.model-score').forEach(sel => {
+    const modelKey = sel.dataset.model;
+    const val = sel.value;
+    if (modelKey && val) {
+      modelScores[modelKey] = val;
+    }
+  });
+
   const showGt = document.getElementById("toggle_gt")?.checked || false;
   const comment = document.getElementById("comment")?.value || "";
 
@@ -410,14 +537,19 @@ function collectAnswer() {
     case_id: caseId,
     saved_at: nowISO(),
     show_gt: showGt,
-    overall_score: overall,
+    model_scores: modelScores,
     comment,
     open_model,
   };
 }
 
 function validateAnswer(ans) {
-  if (!ans.overall_score) return "Overall Score seç (1–5).";
+  const scoredCount = Object.keys(ans.model_scores || {}).length;
+  const totalModels = MODEL_COLUMNS.length;
+  if (scoredCount < totalModels) {
+    const missing = totalModels - scoredCount;
+    return `${missing} model icin skor secilmedi. Tum modelleri skorlayin.`;
+  }
   return null;
 }
 
@@ -429,15 +561,31 @@ async function tryRemoteSync(record) {
 async function onSaveNext() {
   const ans = collectAnswer();
   const err = validateAnswer(ans);
-  if (err) { $("appStatus").textContent = `⚠️ ${err}`; return; }
+  if (err) {
+    $("appStatus").textContent = `⚠️ ${err}`;
+    showToast(err, 'error');
+    return;
+  }
 
   const d = STATE.datasets[ACTIVE_DATASET];
   d.answers[ans.case_id] = ans;
   STATE.audit.last_saved_at = nowISO();
-  saveState(STATE.user.id, STATE);
+  STATE.audit.save_count = (STATE.audit.save_count || 0) + 1;
 
-  // Only local save
-  $("appStatus").textContent = "✅ Saved locally. (GitHub Pages: Sonuçlar tarayıcıda saklanır)";
+  // Save immediately
+  try {
+    saveState(STATE.user.id, STATE);
+    showToast('Kaydedildi!', 'success');
+  } catch (e) {
+    console.error('Save failed:', e);
+    showToast('Kaydetme hatasi!', 'error');
+    $("appStatus").textContent = `❌ Kaydetme hatasi: ${e.message}`;
+    return;
+  }
+
+  // Update status
+  const { totalAll, doneAll } = computeOverallProgress();
+  $("appStatus").textContent = `✅ Kaydedildi (${doneAll}/${totalAll} tamamlandi)`;
 
   if (ACTIVE_INDEX < d.cases.length - 1) {
     ACTIVE_INDEX += 1;
@@ -451,41 +599,78 @@ async function onSaveNext() {
       ACTIVE_DATASET = next.key;
       ACTIVE_INDEX = STATE.datasets[ACTIVE_DATASET].cursor || 0;
       renderTabs(); renderCase();
+      showToast(`${next.label} dataseti'ne gecildi`, 'info');
     } else {
-      $("appStatus").textContent = "🎉 Completed all datasets. Export ile sonuçları indir.";
+      $("appStatus").textContent = "🎉 Tum datasetler tamamlandi! Export ile sonuclari indirebilirsin.";
+      showToast('Tebrikler! Tum vakalar tamamlandi!', 'success');
     }
   }
 }
 
 function onPrev() {
   const d = STATE.datasets[ACTIVE_DATASET];
-  if (ACTIVE_INDEX > 0) { ACTIVE_INDEX -= 1; renderCase(); }
-  else { $("appStatus").textContent = "Already at first case in this dataset."; }
+  if (ACTIVE_INDEX > 0) {
+    ACTIVE_INDEX -= 1;
+    renderCase();
+  } else {
+    $("appStatus").textContent = "Bu datasetteki ilk vakada zaten.";
+  }
 }
 
 function onExport() {
   if (!STATE) return;
+
+  const { totalAll, doneAll } = computeOverallProgress();
+
   const exportObj = {
     exported_at: nowISO(),
     version: STATE.version,
     user: STATE.user,
     config: STATE.config,
-    audit: STATE.audit,
+    audit: {
+      ...STATE.audit,
+      export_count: (STATE.audit.export_count || 0) + 1,
+      total_cases: totalAll,
+      completed_cases: doneAll,
+      completion_percentage: totalAll ? Math.round((doneAll / totalAll) * 100) : 0
+    },
     model_map: Object.fromEntries(MODEL_COLUMNS.map(m => [m.key, { column: m.col, display: m.display }])),
     datasets: {},
   };
+
   for (const ds of DATASETS) {
     const d = STATE.datasets[ds.key];
-    exportObj.datasets[ds.key] = { cases: d.cases.map(c => ({ id: c.id })), answers: d.answers };
+    exportObj.datasets[ds.key] = {
+      cases: d.cases.map(c => ({ id: c.id })),
+      answers: d.answers,
+      stats: {
+        total: d.cases.length,
+        completed: Object.keys(d.answers || {}).length
+      }
+    };
   }
-  downloadText(`rater_results_${STATE.user.id}.json`, JSON.stringify(exportObj, null, 2));
+
+  // Update audit in state
+  STATE.audit.export_count = exportObj.audit.export_count;
+  saveState(STATE.user.id, STATE);
+
+  downloadText(`rater_results_${STATE.user.id}_${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(exportObj, null, 2));
+  showToast('Sonuclar indirildi!', 'success');
 }
 
 function onReset() {
-  if (!STATE) { $("loginStatus").textContent = "No active user."; return; }
-  const ok = confirm("This will delete local progress for this user ID. Continue?");
+  if (!STATE) { $("loginStatus").textContent = "Aktif kullanici yok."; return; }
+  const ok = confirm(`"${STATE.user.id}" kullanicisinin tum ilerlemesi silinecek. Devam etmek istiyor musun?`);
   if (!ok) return;
+
+  // Clear auto-save timer
+  if (autoSaveTimer) {
+    clearInterval(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+
   localStorage.removeItem(storageKey(STATE.user.id));
+  showToast('Ilerleme silindi', 'info');
   location.reload();
 }
 
