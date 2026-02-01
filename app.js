@@ -511,8 +511,12 @@ function renderCase() {
 
     const head = $(headId);
     const body = $(bodyId);
+    const scoreSelect = $(scoreId);
+
     head.addEventListener("click", () => {
       body.classList.toggle("open");
+      // Disable score selection when model output is collapsed
+      scoreSelect.disabled = !body.classList.contains("open");
     });
   }
 
