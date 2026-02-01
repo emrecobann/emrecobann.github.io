@@ -565,8 +565,17 @@ function renderCase() {
     const body = $(bodyId);
     const scoreSelect = $(scoreId);
 
-    // Toggle model output on click
-    head.addEventListener("click", () => {
+    // Prevent dropdown clicks from closing the card
+    scoreSelect.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+
+    // Toggle model output on click (but not when clicking dropdown)
+    head.addEventListener("click", (e) => {
+      // Don't toggle if clicking on the select element
+      if (e.target === scoreSelect || scoreSelect.contains(e.target)) {
+        return;
+      }
       const isOpen = body.classList.toggle("open");
       scoreSelect.disabled = !isOpen;
     });
