@@ -287,18 +287,6 @@ function showToast(message, type = 'info') {
 }
 
 function init() {
-  // populate sample size: only 10, 15, 20
-  const sel = $("sampleSize");
-  sel.innerHTML = "";
-  const allowedSizes = [10, 15, 20];
-  for (const n of allowedSizes) {
-    const opt = document.createElement("option");
-    opt.value = String(n);
-    opt.textContent = `${n} cases`;
-    if (n === 15) opt.selected = true;
-    sel.appendChild(opt);
-  }
-
   $("btnStart").addEventListener("click", onStart);
   $("btnPrev").addEventListener("click", onPrev);
   $("btnSaveNext").addEventListener("click", onSaveNext);
@@ -325,7 +313,7 @@ document.addEventListener("DOMContentLoaded", init);
 
 async function onStart() {
   const userId = $("userId").value.trim();
-  const sampleSize = parseInt($("sampleSize").value, 10);
+  const sampleSize = 10; // Fixed: 10 cases per dataset
 
   if (!userId) {
     $("loginStatus").textContent = "⚠️ User ID is required.";
