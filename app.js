@@ -447,18 +447,17 @@ function renderCase() {
       <div class="panel">
         <h2>Case Information</h2>
         <div class="kv"><div class="k">Dataset</div><div class="v">${escapeHtml(ACTIVE_DATASET)}</div></div>
-        <div class="kv"><div class="k">Case ID</div><div class="v">${escapeHtml(caseId)}</div></div>
         <div class="kv"><div class="k">Indication</div><div class="v">${escapeHtml(c.indication || "-")}</div></div>
         <div class="kv"><div class="k">Findings</div><div class="v">${escapeHtml(c.findings || "-")}</div></div>
 
         <div class="kv">
           <div class="k">
             <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-              <input type="checkbox" id="${gtToggleId}" ${existing?.show_gt ? "checked" : ""} style="width:18px;height:18px;accent-color:#8b7bff;"/>
+              <input type="checkbox" id="${gtToggleId}" ${existing?.show_gt ? "checked" : ""} style="width:18px;height:18px;accent-color:#5a7bb5;"/>
               <span>Show Ground Truth</span>
             </label>
           </div>
-          <div class="v" id="gt_block" style="display:${existing?.show_gt ? "block" : "none"};padding:12px;background:rgba(43,228,167,0.08);border-radius:8px;border:1px solid rgba(43,228,167,0.2);margin-top:8px;">${escapeHtml(c.ground_truth || "-")}</div>
+          <div class="v" id="gt_block" style="display:${existing?.show_gt ? "block" : "none"};padding:12px;background:rgba(90,155,109,0.1);border-radius:8px;border:1px solid rgba(90,155,109,0.3);margin-top:8px;">${escapeHtml(c.ground_truth || "-")}</div>
         </div>
 
         <div class="kv">
@@ -495,7 +494,7 @@ function renderCase() {
     card.innerHTML = `
       <div class="output-head" id="${headId}">
         <div class="output-title">Model ${label}</div>
-        <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Skoru" onclick="event.stopPropagation()">
+        <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Score" onclick="event.stopPropagation()">
           <option value="" ${!existingScore ? "selected" : ""}>Score...</option>
           <option value="1" ${existingScore === "1" ? "selected" : ""}>1</option>
           <option value="2" ${existingScore === "2" ? "selected" : ""}>2</option>
@@ -504,7 +503,7 @@ function renderCase() {
           <option value="5" ${existingScore === "5" ? "selected" : ""}>5</option>
         </select>
       </div>
-      <div class="output-body ${existing?.open_model === modelKey ? "open" : ""}" id="${bodyId}">
+      <div class="output-body open" id="${bodyId}">
         <div class="output-text">${escapeHtml(outputText || "[EMPTY]")}</div>
       </div>
     `;
@@ -513,20 +512,13 @@ function renderCase() {
     const head = $(headId);
     const body = $(bodyId);
     head.addEventListener("click", () => {
-      const isOpen = body.classList.contains("open");
-      document.querySelectorAll(".output-body").forEach(x => x.classList.remove("open"));
-      if (!isOpen) body.classList.add("open");
+      body.classList.toggle("open");
     });
   }
 
   $("appStatus").textContent = existing
     ? `✅ Previously saved (${existing.saved_at.slice(0, 16).replace('T', ' ')}). You can edit and save again.`
     : `Not yet saved. Select scores and click "Save & Next".`;
-
-  if (!existing) {
-    const firstBody = document.querySelector(".output-body");
-    if (firstBody) firstBody.classList.add("open");
-  }
 }
 
 function collectAnswer() {
