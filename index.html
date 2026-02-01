@@ -1,161 +1,119 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="tr">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="author" content="Emre Çoban">
-    <meta name="description" content="Portfolio of Emre Çoban, AI Engineer & Python Developer">
-    <title>Emre Çoban | AI Engineer</title>
-
-    <!-- Favicon -->
-    <link rel="icon" href="img/favicon.ico" type="image/x-icon">
-
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-
-    <!-- Font Awesome -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" rel="stylesheet">
-
-    <!-- Custom Styles -->
-    <style>
-        :root {
-            --primary-color: #0073e6;
-            --background-color: #f4f7fc;
-            --text-color: #333;
-            --card-bg: #fff;
-            --shadow: rgba(0, 0, 0, 0.1);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Inter', sans-serif;
-            background: var(--background-color);
-            color: var(--text-color);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            text-align: center;
-        }
-
-        .container {
-            background: var(--card-bg);
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0px 4px 12px var(--shadow);
-            max-width: 420px;
-            width: 90%;
-            transition: transform 0.3s ease-in-out;
-        }
-
-        .container:hover {
-            transform: translateY(-5px);
-        }
-
-        .profile-img {
-            width: 120px;
-            height: 120px;
-            border-radius: 50%;
-            object-fit: cover;
-            margin-bottom: 20px;
-            border: 4px solid var(--primary-color);
-        }
-
-        h1 {
-            font-size: 26px;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }
-
-        h2 {
-            font-size: 18px;
-            font-weight: 400;
-            color: #555;
-            margin-bottom: 20px;
-        }
-
-        .links {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            margin-top: 20px;
-        }
-
-        .links a {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            text-decoration: none;
-            font-size: 16px;
-            font-weight: 500;
-            color: var(--primary-color);
-            background: rgba(0, 115, 230, 0.1);
-            padding: 10px;
-            border-radius: 8px;
-            transition: background 0.3s ease-in-out;
-        }
-
-        .links a:hover {
-            background: var(--primary-color);
-            color: #fff;
-        }
-
-        .btn {
-            display: inline-block;
-            background: var(--primary-color);
-            color: white;
-            font-size: 16px;
-            font-weight: 600;
-            padding: 12px 18px;
-            border-radius: 8px;
-            text-decoration: none;
-            margin-top: 20px;
-            transition: background 0.3s ease-in-out;
-        }
-
-        .btn:hover {
-            background: #005bb5;
-        }
-
-        /* Responsive Adjustments */
-        @media (max-width: 500px) {
-            .container {
-                padding: 30px;
-            }
-            .profile-img {
-                width: 100px;
-                height: 100px;
-            }
-            h1 {
-                font-size: 22px;
-            }
-            h2 {
-                font-size: 16px;
-            }
-        }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radiology Impression Rater</title>
+  <meta name="color-scheme" content="dark">
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
+  <script src="app.js" defer></script>
 </head>
+
 <body>
+  <div class="bg">
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+    <div class="grid"></div>
+  </div>
 
-    <div class="container">
-        <img src="img/profile.jpg" alt="Emre Çoban" class="profile-img">
-        <h1>Emre Çoban</h1>
-        <h2>AI Engineer & Python Developer</h2>
-
-        <div class="links">
-            <a href="https://www.linkedin.com/in/emre-çoban-73b3851ba/" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
-            <a href="https://github.com/emrecobann" target="_blank"><i class="fab fa-github"></i> GitHub</a>
-            <a href="https://medium.com/@emrecobann" target="_blank"><i class="fab fa-medium"></i> Medium</a>
-        </div>
-
-        <a href="img/CV_emre_coban.pdf" class="btn" target="_blank">Download CV</a>
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">
+        <div class="mark-inner">R</div>
+      </div>
+      <div class="brand-text">
+        <div class="title">Radiology Impression Rater</div>
+        <div class="subtitle">Blinded outputs • Overall score (1–5) • Offline-first</div>
+      </div>
     </div>
 
+    <div class="topbar-right">
+      <span id="userBadge" class="badge hidden"></span>
+      <button id="btnExport" class="btn ghost hidden" type="button">Export</button>
+      <button id="btnReset" class="btn danger hidden" type="button">Reset</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- LOGIN -->
+    <section id="screenLogin" class="card">
+      <div class="card-head">
+        <h1>Başla / Devam Et</h1>
+        <p class="muted">Her kullanıcı için örnekler <b>UserID</b> ile seed’lenir: aynı kullanıcı kaldığı yerden devam
+          eder, farklı kullanıcı farklı vakalar görür.</p>
+      </div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label class="label">Kullanıcı ID (zorunlu)</label>
+          <input id="userId" class="input" placeholder="örn: dr_ayse_01" autocomplete="off" />
+          <div class="hint">Aynı ID → aynı vaka seti + progress. Farklı ID → farklı vaka seti.</div>
+        </div>
+
+        <div class="field">
+          <label class="label">Kurum / Ünvan (opsiyonel)</label>
+          <input id="userMeta" class="input" placeholder="örn: Radyoloji Uzmanı, XXX Hastanesi" autocomplete="off" />
+          <div class="hint">Export içinde yer alır.</div>
+        </div>
+
+        <div class="field">
+          <label class="label">Her dataset için örnek sayısı</label>
+          <select id="sampleSize" class="input"></select>
+          <div class="hint">10–20 arası seçebilirsin.</div>
+        </div>
+
+        <!-- Remote kayıt endpoint kaldırıldı. Sonuçlar sadece tarayıcıda saklanır. -->
+      </div>
+
+      <details class="details">
+        <summary>Skorlama</summary>
+        <ul>
+          <li>Her vaka için <b>tek Overall Score</b>: 1 (kötü) — 5 (mükemmel).</li>
+          <li>Model isimleri gizli: A–G.</li>
+          <li>GT Impression isteğe bağlı: “Show GT” ile aç.</li>
+        </ul>
+      </details>
+
+
+      <div class="actions">
+        <button id="btnStart" class="btn primary" type="button">Start / Resume</button>
+      </div>
+      <div class="muted" style="margin-top:10px;">Sonuçlar sadece bu tarayıcıda saklanır. Sunucuya gönderilmez.</div>
+
+      <div id="loginStatus" class="status"></div>
+    </section>
+
+    <!-- APP -->
+    <section id="screenApp" class="hidden">
+      <div class="toolbar">
+        <div class="tabs" id="datasetTabs"></div>
+
+        <div class="toolbar-right">
+          <div class="progress">
+            <div class="progress-label"><span id="progressText">0/0</span></div>
+            <div class="progress-bar">
+              <div id="progressFill" class="progress-fill" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section id="caseCard" class="card"></section>
+
+      <div class="actions sticky">
+        <button id="btnPrev" class="btn ghost" type="button">← Prev</button>
+        <button id="btnSaveNext" class="btn primary" type="button">Save & Next →</button>
+      </div>
+
+      <div id="appStatus" class="status"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="muted">GitHub Pages • Offline-first (localStorage) • Optional remote sync</div>
+  </footer>
 </body>
+
 </html>
