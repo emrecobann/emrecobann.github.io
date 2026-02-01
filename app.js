@@ -81,9 +81,30 @@ function downloadText(filename, text) {
 }
 
 async function fetchCsv(file) {
-  const res = await fetch(file, { cache: "no-store" });
-  if (!res.ok) throw new Error(`CSV fetch failed (${res.status}): ${file}`);
-  const text = await res.text();
+  // Try fetch first, fallback to XMLHttpRequest for file:// protocol
+  let text;
+
+  if (location.protocol === "file:") {
+    // XMLHttpRequest works with file:// in some browsers
+    text = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", file, true);
+      xhr.onload = () => {
+        if (xhr.status === 0 || xhr.status === 200) {
+          resolve(xhr.responseText);
+        } else {
+          reject(new Error(`XHR failed (${xhr.status}): ${file}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error(`XHR error loading: ${file}. Chrome blocks file:// requests. Try Firefox or use python -m http.server.`));
+      xhr.send();
+    });
+  } else {
+    const res = await fetch(file, { cache: "no-store" });
+    if (!res.ok) throw new Error(`CSV fetch failed (${res.status}): ${file}`);
+    text = await res.text();
+  }
+
   return new Promise((resolve, reject) => {
     Papa.parse(text, {
       header: true,
@@ -194,7 +215,7 @@ function init() {
   for (const n of allowedSizes) {
     const opt = document.createElement("option");
     opt.value = String(n);
-    opt.textContent = `${n} vaka`;
+    opt.textContent = `${n} cases`;
     if (n === 15) opt.selected = true;
     sel.appendChild(opt);
   }
@@ -228,7 +249,7 @@ async function onStart() {
   const sampleSize = parseInt($("sampleSize").value, 10);
 
   if (!userId) {
-    $("loginStatus").textContent = "⚠️ Kullanici ID gerekli.";
+    $("loginStatus").textContent = "⚠️ User ID is required.";
     $("userId").focus();
     return;
   }
@@ -236,7 +257,7 @@ async function onStart() {
   $("loginStatus").innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="spinner"></div>
-      <span>Datasetler yukleniyor...</span>
+      <span>Loading datasets...</span>
     </div>
   `;
 
@@ -274,11 +295,6 @@ async function onStart() {
   }
 
   try {
-    // Helpful error if running from file://
-    if (location.protocol === "file:") {
-      throw new Error("Bu sayfayı file:// ile açtın. fetch() çalışmaz. GitHub Pages veya local server (python -m http.server) ile açmalısın.");
-    }
-
     for (const ds of DATASETS) {
       if (state.datasets[ds.key]?.cases?.length) continue;
 
@@ -333,19 +349,25 @@ async function onStart() {
       }
     }, AUTO_SAVE_INTERVAL);
 
-    showToast(`Hosgeldin, ${STATE.user.id}!`, 'success');
+    showToast(`Welcome, ${STATE.user.id}!`, 'success');
   } catch (e) {
     console.error(e);
+    const isFileProtocol = location.protocol === "file:";
     $("loginStatus").innerHTML =
-      `<div style="color:#ff4d6d;">❌ Dataset yukleme hatasi</div>
-      <div style="margin-top:8px;color:var(--muted);">Hata: ${escapeHtml(e.message)}</div>
+      `<div style="color:#ff4d6d;">❌ Dataset loading error</div>
+      <div style="margin-top:8px;color:var(--muted);">Error: ${escapeHtml(e.message)}</div>
       <div style="margin-top:12px;padding:12px;background:rgba(0,0,0,0.2);border-radius:8px;font-size:12px;">
-        <strong>Kontrol listesi:</strong><br>
-        • Siteyi <code>https://emrecobann.github.io</code> uzerinden mi actin?<br>
-        • <code>file://</code> ile acildiginda fetch() calismaz<br>
-        • index.html repo root'ta mi?<br>
-        • data/ klasoru repo root'ta mi?<br>
-        • Ilk acilista 1-2 dk cache/Pages deploy beklemen gerekebilir
+        <strong>Checklist:</strong><br>
+        ${isFileProtocol ? `
+        • <strong>file:// protocol</strong>: Chrome blocks CORS<br>
+        • Try <strong>Firefox</strong> with file://<br>
+        • Or run: <code>python -m http.server 8000</code> then open <code>localhost:8000</code><br>
+        ` : `
+        • Did you open <code>https://emrecobann.github.io</code>?<br>
+        • Is index.html in repo root?<br>
+        • Is data/ folder in repo root?<br>
+        • First load may take 1-2 min for GitHub Pages deployment<br>
+        `}
       </div>`;
   }
 }
@@ -423,31 +445,31 @@ function renderCase() {
   $("caseCard").innerHTML = `
     <div class="case-grid">
       <div class="panel">
-        <h2>Vaka Bilgileri</h2>
+        <h2>Case Information</h2>
         <div class="kv"><div class="k">Dataset</div><div class="v">${escapeHtml(ACTIVE_DATASET)}</div></div>
-        <div class="kv"><div class="k">Vaka ID</div><div class="v">${escapeHtml(caseId)}</div></div>
-        <div class="kv"><div class="k">Endikasyon</div><div class="v">${escapeHtml(c.indication || "-")}</div></div>
-        <div class="kv"><div class="k">Bulgular</div><div class="v">${escapeHtml(c.findings || "-")}</div></div>
+        <div class="kv"><div class="k">Case ID</div><div class="v">${escapeHtml(caseId)}</div></div>
+        <div class="kv"><div class="k">Indication</div><div class="v">${escapeHtml(c.indication || "-")}</div></div>
+        <div class="kv"><div class="k">Findings</div><div class="v">${escapeHtml(c.findings || "-")}</div></div>
 
         <div class="kv">
           <div class="k">
             <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
               <input type="checkbox" id="${gtToggleId}" ${existing?.show_gt ? "checked" : ""} style="width:18px;height:18px;accent-color:#8b7bff;"/>
-              <span>Ground Truth Goster</span>
+              <span>Show Ground Truth</span>
             </label>
           </div>
           <div class="v" id="gt_block" style="display:${existing?.show_gt ? "block" : "none"};padding:12px;background:rgba(43,228,167,0.08);border-radius:8px;border:1px solid rgba(43,228,167,0.2);margin-top:8px;">${escapeHtml(c.ground_truth || "-")}</div>
         </div>
 
         <div class="kv">
-          <div class="k">Yorum (opsiyonel)</div>
-          <textarea id="comment" class="input" rows="3" placeholder="Kisa not veya aciklama..." style="resize:vertical;">${escapeHtml(existing?.comment || "")}</textarea>
+          <div class="k">Comment (optional)</div>
+          <textarea id="comment" class="input" rows="3" placeholder="Short note or explanation..." style="resize:vertical;">${escapeHtml(existing?.comment || "")}</textarea>
         </div>
       </div>
 
       <div class="panel">
-        <h2>Model Ciktilari (Kor)</h2>
-        <p class="help" style="margin-bottom:16px;">Her model ciktisi icin 1-5 arasi skor verin. Klinik dogruluk temel kriterdir.</p>
+        <h2>Model Outputs (Blinded)</h2>
+        <p class="help" style="margin-bottom:16px;">Score each model output from 1-5. Clinical accuracy is the main criterion.</p>
         <div class="outputs" id="outputs"></div>
       </div>
     </div>
@@ -474,7 +496,7 @@ function renderCase() {
       <div class="output-head" id="${headId}">
         <div class="output-title">Model ${label}</div>
         <select class="model-score" id="${scoreId}" data-model="${modelKey}" aria-label="Model ${label} Skoru" onclick="event.stopPropagation()">
-          <option value="" ${!existingScore ? "selected" : ""}>Skor...</option>
+          <option value="" ${!existingScore ? "selected" : ""}>Score...</option>
           <option value="1" ${existingScore === "1" ? "selected" : ""}>1</option>
           <option value="2" ${existingScore === "2" ? "selected" : ""}>2</option>
           <option value="3" ${existingScore === "3" ? "selected" : ""}>3</option>
@@ -498,8 +520,8 @@ function renderCase() {
   }
 
   $("appStatus").textContent = existing
-    ? `✅ Daha once kaydedildi (${existing.saved_at.slice(0, 16).replace('T', ' ')}). Duzenleyip tekrar kaydedebilirsin.`
-    : `Henuz kaydedilmedi. Skor secip "Kaydet ve Ileri" tikla.`;
+    ? `✅ Previously saved (${existing.saved_at.slice(0, 16).replace('T', ' ')}). You can edit and save again.`
+    : `Not yet saved. Select scores and click "Save & Next".`;
 
   if (!existing) {
     const firstBody = document.querySelector(".output-body");
@@ -548,7 +570,7 @@ function validateAnswer(ans) {
   const totalModels = MODEL_COLUMNS.length;
   if (scoredCount < totalModels) {
     const missing = totalModels - scoredCount;
-    return `${missing} model icin skor secilmedi. Tum modelleri skorlayin.`;
+    return `${missing} model(s) not scored. Please score all models.`;
   }
   return null;
 }
@@ -575,17 +597,17 @@ async function onSaveNext() {
   // Save immediately
   try {
     saveState(STATE.user.id, STATE);
-    showToast('Kaydedildi!', 'success');
+    showToast('Saved!', 'success');
   } catch (e) {
     console.error('Save failed:', e);
-    showToast('Kaydetme hatasi!', 'error');
-    $("appStatus").textContent = `❌ Kaydetme hatasi: ${e.message}`;
+    showToast('Save error!', 'error');
+    $("appStatus").textContent = `❌ Save error: ${e.message}`;
     return;
   }
 
   // Update status
   const { totalAll, doneAll } = computeOverallProgress();
-  $("appStatus").textContent = `✅ Kaydedildi (${doneAll}/${totalAll} tamamlandi)`;
+  $("appStatus").textContent = `✅ Saved (${doneAll}/${totalAll} completed)`;
 
   if (ACTIVE_INDEX < d.cases.length - 1) {
     ACTIVE_INDEX += 1;
@@ -599,10 +621,10 @@ async function onSaveNext() {
       ACTIVE_DATASET = next.key;
       ACTIVE_INDEX = STATE.datasets[ACTIVE_DATASET].cursor || 0;
       renderTabs(); renderCase();
-      showToast(`${next.label} dataseti'ne gecildi`, 'info');
+      showToast(`Switched to ${next.label} dataset`, 'info');
     } else {
-      $("appStatus").textContent = "🎉 Tum datasetler tamamlandi! Export ile sonuclari indirebilirsin.";
-      showToast('Tebrikler! Tum vakalar tamamlandi!', 'success');
+      $("appStatus").textContent = "🎉 All datasets completed! Use Export to download results.";
+      showToast('Congratulations! All cases completed!', 'success');
     }
   }
 }
@@ -613,7 +635,7 @@ function onPrev() {
     ACTIVE_INDEX -= 1;
     renderCase();
   } else {
-    $("appStatus").textContent = "Bu datasetteki ilk vakada zaten.";
+    $("appStatus").textContent = "Already at the first case in this dataset.";
   }
 }
 
@@ -659,8 +681,8 @@ function onExport() {
 }
 
 function onReset() {
-  if (!STATE) { $("loginStatus").textContent = "Aktif kullanici yok."; return; }
-  const ok = confirm(`"${STATE.user.id}" kullanicisinin tum ilerlemesi silinecek. Devam etmek istiyor musun?`);
+  if (!STATE) { $("loginStatus").textContent = "No active user."; return; }
+  const ok = confirm(`All progress for "${STATE.user.id}" will be deleted. Continue?`);
   if (!ok) return;
 
   // Clear auto-save timer
@@ -670,7 +692,7 @@ function onReset() {
   }
 
   localStorage.removeItem(storageKey(STATE.user.id));
-  showToast('Ilerleme silindi', 'info');
+  showToast('Progress deleted', 'info');
   location.reload();
 }
 
