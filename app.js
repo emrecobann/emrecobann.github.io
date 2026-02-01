@@ -1,14 +1,18 @@
-/* Radiology Impression Rater v4
+/* Radiology Impression Rater v5
  * - Professional UI with improved accessibility
  * - Everyone sees DIFFERENT cases (userId-seeded)
  * - Sample size: 10, 15, or 20
- * - Single overall score (1–5) per case
- * - Offline-first: localStorage with auto-save
+ * - Per-model scoring (1–5)
+ * - Supabase sync + localStorage backup
  *
  * Important deployment note:
  * - Must be served over http(s) (GitHub Pages)
  * - Opening index.html via file:// will cause fetch() to fail
  */
+
+// ===== SUPABASE CONFIG =====
+const SUPABASE_URL = "https://oqfbijskgpfqhbonbjww.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xZmJpanNrZ3BmcWhib25iand3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk5MzIxMTksImV4cCI6MjA4NTUwODExOX0.9lbI8zWpPRytiO5j__DeniQ73d0ouuvsj17RDFsS_4s";
 
 const DATASETS = [
   { key: "rexgradient", label: "RexGradient", file: "data/rexgradient_all_predictions_final.csv" },
@@ -70,6 +74,79 @@ function loadState(userId) {
   } catch (e) { console.warn("loadState failed", e); return null; }
 }
 function saveState(userId, state) { localStorage.setItem(storageKey(userId), JSON.stringify(state)); }
+
+// ===== SUPABASE FUNCTIONS =====
+async function supabaseGet(userId) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/ratings?user_id=eq.${encodeURIComponent(userId)}&select=*`, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      }
+    });
+    if (!res.ok) throw new Error(`Supabase GET failed: ${res.status}`);
+    const rows = await res.json();
+    if (rows.length > 0) {
+      return rows[0].data;
+    }
+    return null;
+  } catch (e) {
+    console.warn('Supabase GET error:', e);
+    return null;
+  }
+}
+
+async function supabaseSave(userId, state) {
+  try {
+    // First check if user exists
+    const existing = await fetch(`${SUPABASE_URL}/rest/v1/ratings?user_id=eq.${encodeURIComponent(userId)}&select=id`, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      }
+    });
+    const rows = await existing.json();
+
+    const payload = {
+      user_id: userId,
+      data: state,
+      updated_at: new Date().toISOString()
+    };
+
+    let res;
+    if (rows.length > 0) {
+      // Update existing
+      res = await fetch(`${SUPABASE_URL}/rest/v1/ratings?user_id=eq.${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify(payload)
+      });
+    } else {
+      // Insert new
+      res = await fetch(`${SUPABASE_URL}/rest/v1/ratings`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    if (!res.ok) throw new Error(`Supabase save failed: ${res.status}`);
+    return true;
+  } catch (e) {
+    console.error('Supabase save error:', e);
+    return false;
+  }
+}
 
 function downloadText(filename, text) {
   const blob = new Blob([text], { type: "application/json" });
@@ -193,7 +270,9 @@ function showToast(message, type = 'info') {
       .toast-success svg { color: #2be4a7; }
       .toast-error { border-color: rgba(255, 77, 109, 0.4); }
       .toast-error svg { color: #ff4d6d; }
-      .toast-info svg { color: #8b7bff; }
+      .toast-warning { border-color: rgba(232, 169, 78, 0.4); }
+      .toast-warning svg { color: #e8a94e; }
+      .toast-info svg { color: #5a7bb5; }
       @keyframes toastIn {
         to { transform: translateX(-50%) translateY(0); }
       }
@@ -257,7 +336,7 @@ async function onStart() {
   $("loginStatus").innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="spinner"></div>
-      <span>Loading datasets...</span>
+      <span>Loading...</span>
     </div>
   `;
 
@@ -268,8 +347,8 @@ async function onStart() {
     style.textContent = `
       .spinner {
         width: 18px; height: 18px;
-        border: 2px solid rgba(139,123,255,0.2);
-        border-top-color: #8b7bff;
+        border: 2px solid rgba(90,123,181,0.2);
+        border-top-color: #5a7bb5;
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
       }
@@ -278,10 +357,15 @@ async function onStart() {
     document.head.appendChild(style);
   }
 
-  let state = loadState(userId);
+  // Try to load from Supabase first, fallback to localStorage
+  let state = await supabaseGet(userId);
+  if (!state) {
+    state = loadState(userId);
+  }
+
   if (!state) {
     state = {
-      version: 4,
+      version: 5,
       user: { id: userId, created_at: nowISO() },
       config: { sample_size_per_dataset: sampleSize },
       datasets: {},
@@ -571,11 +655,6 @@ function validateAnswer(ans) {
   return null;
 }
 
-// Remote sync is disabled; always return skipped
-async function tryRemoteSync(record) {
-  return { ok: false, skipped: true };
-}
-
 async function onSaveNext() {
   const ans = collectAnswer();
   const err = validateAnswer(ans);
@@ -590,15 +669,19 @@ async function onSaveNext() {
   STATE.audit.last_saved_at = nowISO();
   STATE.audit.save_count = (STATE.audit.save_count || 0) + 1;
 
-  // Save immediately
+  // Save to localStorage first (backup)
   try {
     saveState(STATE.user.id, STATE);
-    showToast('Saved!', 'success');
   } catch (e) {
-    console.error('Save failed:', e);
-    showToast('Save error!', 'error');
-    $("appStatus").textContent = `❌ Save error: ${e.message}`;
-    return;
+    console.error('LocalStorage save failed:', e);
+  }
+
+  // Save to Supabase (primary)
+  const synced = await supabaseSave(STATE.user.id, STATE);
+  if (synced) {
+    showToast('Saved to cloud!', 'success');
+  } else {
+    showToast('Saved locally (cloud sync failed)', 'warning');
   }
 
   // Update status
