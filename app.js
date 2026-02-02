@@ -1,8 +1,8 @@
-/* Radiology Impression Rater v6
+/* Radiology Impression Rater v7
  * - Professional UI with improved accessibility
- * - TWO MODES: Model Output Evaluation + Case Hardness Evaluation
- * - Everyone sees DIFFERENT cases (userId-seeded)
- * - Per-model scoring (1–5) OR hardness rating (1-4)
+ * - TWO MODES: Data Quality Assessment + Model Output Evaluation
+ * - Data Quality: CoT + Hardness evaluation (1-5 scale), fixed cases
+ * - Model Evaluation: Fixed cases, user-seeded order/models
  * - Supabase sync + localStorage backup
  *
  * Important deployment note:
@@ -20,8 +20,8 @@ const DATASETS = [
   { key: "mimic", label: "MIMIC-CXR", file: "data/mimic_all_predictions_final.csv" },
 ];
 
-// For hardness evaluation - uses all_data_downsample.csv with hardness labels
-const HARDNESS_DATASET = { key: "hardness_eval", label: "Hardness Evaluation", file: "data/all_data_downsampled.csv" };
+// For data quality assessment - uses deepseek_cot_out.csv with hardness labels and CoT
+const DATA_QUALITY_DATASET = { key: "data_quality", label: "Data Quality Assessment", file: "data/deepseek_cot_out.csv" };
 
 const MODEL_COLUMNS = [
   { key: "m1", col: "m1_7B_23K_impression", display: "M1 (Medical)" },
@@ -216,14 +216,25 @@ async function fetchCsv(file) {
 
 function normalizeRow(row) {
   const safe = {
-    // all_data_downsampled.csv uses: StudyInstanceUid, Findings, Indication, Impression, Hardness, split
+    // deepseek_cot_out.csv uses standard column names
     id: row.StudyInstanceUid ?? row.id ?? row.ID ?? "",
     findings: row.Findings ?? row.findings ?? "",
     indication: row.Indication ?? row.indication ?? "",
     ground_truth: row.Impression ?? row.impression ?? row.ground_truth ?? "",
     split: row.split ?? row.Split ?? "",
     hardness: row.Hardness ?? row.hardness ?? "",
+    cot: row.raw_output ?? row.raw_output_cot ?? row.CoT ?? row.cot ?? row.COT ?? "",
   };
+  // Debug log for first few rows
+  if (Math.random() < 0.001) {
+    console.log("Sample normalized row:", {
+      id: safe.id?.substring(0, 30),
+      gt_source: row.Impression ? 'Impression' : 'other',
+      gt_value: safe.ground_truth?.substring(0, 50),
+      cot_source: row.raw_output ? 'raw_output' : (row.raw_output_cot ? 'raw_output_cot' : 'other'),
+      cot_value: safe.cot?.substring(0, 50)
+    });
+  }
   for (const m of MODEL_COLUMNS) {
     safe[m.key] = row[m.col] ?? "";
   }
@@ -376,9 +387,6 @@ async function onStart() {
     console.log("onStart called");
     const userId = $("userId").value.trim();
     const sampleSize = 10; // Fixed: 10 cases per dataset
-    const modeRadio = document.querySelector('input[name="evalMode"]:checked');
-    const selectedMode = modeRadio ? modeRadio.value : 'model';
-    console.log("Selected mode:", selectedMode, "User:", userId);
 
     if (!userId) {
       $("loginStatus").textContent = "⚠️ User ID is required.";
@@ -418,33 +426,38 @@ async function onStart() {
     if (!state) {
       console.log("Creating new state");
       state = {
-        version: 6,
-        mode: selectedMode,
+        version: 7,
         user: { id: userId, created_at: nowISO() },
         config: { sample_size_per_dataset: sampleSize },
-        datasets: {},
-        hardness_evaluation: { cases: [], cursor: 0, answers: {} },
+        data_quality: { cases: [], cursor: 0, answers: {}, completed: false },
+        model_evaluation: { datasets: {}, completed: false },
         audit: { last_saved_at: null, save_count: 0 },
       };
     } else {
-      console.log("Using existing state, updating mode to:", selectedMode);
-      // Update mode if changed
-      state.mode = selectedMode;
-      // do NOT overwrite sample size if datasets already built (keeps consistency)
-      if (!Object.keys(state.datasets || {}).length) {
-        state.config.sample_size_per_dataset = sampleSize || state.config.sample_size_per_dataset;
+      // Initialize missing fields for backwards compatibility
+      if (!state.data_quality) {
+        state.data_quality = { cases: [], cursor: 0, answers: {}, completed: false };
       }
-      // Initialize hardness_evaluation if missing
-      if (!state.hardness_evaluation) {
-        state.hardness_evaluation = { cases: [], cursor: 0, answers: {} };
+      if (!state.model_evaluation) {
+        state.model_evaluation = { datasets: {}, completed: false };
+      }
+      // Keep config sample size if datasets already exist
+      if (!Object.keys(state.model_evaluation?.datasets || {}).length) {
+        state.config.sample_size_per_dataset = sampleSize || state.config?.sample_size_per_dataset || 10;
       }
     }
 
-    // Branch based on mode
-    console.log("Starting mode:", selectedMode);
-    if (selectedMode === 'hardness') {
-      await startHardnessMode(userId, state);
+    // Determine which phase to start
+    // Phase 1: Data Quality (must complete first)
+    const dataQualityDone = Object.keys(state.data_quality.answers).length;
+    const dataQualityTotal = state.data_quality.cases.length || 100; // 25 per level * 4
+
+    if (dataQualityDone < dataQualityTotal) {
+      console.log(`Starting Data Quality phase (${dataQualityDone}/${dataQualityTotal} completed)`);
+      await startDataQualityMode(userId, state);
     } else {
+      // Phase 2: Model Evaluation (after data quality complete)
+      console.log("Data Quality complete, starting Model Evaluation");
       await startModelEvalMode(userId, state);
     }
   } catch (error) {
@@ -456,17 +469,32 @@ async function onStart() {
   }
 }
 
-async function startHardnessMode(userId, state) {
+async function startDataQualityMode(userId, state) {
   try {
-    console.log("Starting hardness mode, current cases:", state.hardness_evaluation.cases.length);
-    // Load hardness cases if not already loaded
-    if (state.hardness_evaluation.cases.length === 0) {
-      console.log("Loading CSV from:", HARDNESS_DATASET.file);
-      const rows = await fetchCsv(HARDNESS_DATASET.file);
+    console.log("Starting data quality mode, current cases:", state.data_quality.cases.length);
+    // Load data quality cases if not already loaded
+    if (state.data_quality.cases.length === 0) {
+      console.log("Loading CSV from:", DATA_QUALITY_DATASET.file);
+      const rows = await fetchCsv(DATA_QUALITY_DATASET.file);
       console.log("Total CSV rows loaded:", rows.length);
+      if (rows.length > 0) {
+        console.log("First raw CSV row columns:", Object.keys(rows[0]));
+        console.log("First raw row sample:", {
+          id: rows[0].StudyInstanceUid?.substring(0, 20),
+          impression: rows[0].Impression?.substring(0, 50),
+          cot: rows[0].raw_output?.substring(0, 50)
+        });
+      }
 
       const normalized = rows.map(normalizeRow);
       console.log("Normalized rows:", normalized.length);
+      if (normalized.length > 0) {
+        console.log("First normalized row:", {
+          id: normalized[0].id?.substring(0, 20),
+          gt: normalized[0].ground_truth?.substring(0, 50),
+          cot: normalized[0].cot?.substring(0, 50)
+        });
+      }
 
       // Filter for train split with hardness data
       const trainRows = normalized.filter(r => r.split === 'train' && r.hardness);
@@ -503,11 +531,11 @@ async function startHardnessMode(userId, state) {
         '4': byHardness['4'].length
       });
 
-      // Deterministically select first 10 from each hardness level (sorted by ID for consistency)
+      // Deterministically select first 25 from each hardness level (sorted by ID for consistency)
       const selectedCases = [];
       for (const level of ['1', '2', '3', '4']) {
         const pool = byHardness[level].sort((a, b) => String(a.id).localeCompare(String(b.id)));
-        const selected = pool.slice(0, 10); // Take first 10 (same for everyone)
+        const selected = pool.slice(0, 25); // Take first 25 (same for everyone)
         console.log(`Selected ${selected.length} cases for hardness level ${level}`);
         selectedCases.push(...selected);
       }
@@ -515,7 +543,7 @@ async function startHardnessMode(userId, state) {
       console.log("Total selected cases before shuffle:", selectedCases.length);
 
       // Shuffle the cases using user-specific seed (so same user sees same order)
-      const shuffleSeed = stableHash(`${userId}::hardness_order`);
+      const shuffleSeed = stableHash(`${userId}::data_quality_order`);
       const shuffleRnd = mulberry32(shuffleSeed);
       for (let i = selectedCases.length - 1; i > 0; i--) {
         const j = Math.floor(shuffleRnd() * (i + 1));
@@ -524,17 +552,21 @@ async function startHardnessMode(userId, state) {
 
       console.log("Cases shuffled for user:", userId);
 
-      // Map to hardness case structure
-      state.hardness_evaluation.cases = selectedCases.map(r => ({
-        id: String(r.id),
-        findings: r.findings,
-        indication: r.indication,
-        ground_truth: r.ground_truth,
-        hardness: r.hardness, // System's assigned hardness
-      }));
+      // Map to data quality case structure
+      state.data_quality.cases = selectedCases.map(r => {
+        console.log("Mapping case:", r.id, "GT:", r.ground_truth?.substring(0, 50), "CoT:", r.cot?.substring(0, 50));
+        return {
+          id: String(r.id),
+          findings: r.findings,
+          indication: r.indication,
+          ground_truth: r.ground_truth,
+          hardness: r.hardness, // System's assigned hardness
+          cot: r.cot, // Chain-of-thought
+        };
+      });
 
-      state.hardness_evaluation.cursor = 0;
-      state.hardness_evaluation.answers = {};
+      state.data_quality.cursor = 0;
+      state.data_quality.answers = {};
     }
 
     saveState(userId, state);
@@ -577,16 +609,26 @@ async function startHardnessMode(userId, state) {
 async function startModelEvalMode(userId, state) {
   try {
     for (const ds of DATASETS) {
-      if (state.datasets[ds.key]?.cases?.length) continue;
+      if (state.model_evaluation.datasets[ds.key]?.cases?.length) continue;
 
       const rows = await fetchCsv(ds.file);
       const normalized = rows.map(normalizeRow);
 
-      const seedBase = `${userId}::${ds.key}::sample`;
-      const sampled = seededSample(normalized, state.config.sample_size_per_dataset, seedBase);
+      // Fixed dataset: Take first 10 cases (sorted by ID for consistency)
+      const sortedRows = normalized.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      const fixedSample = sortedRows.slice(0, state.config.sample_size_per_dataset);
 
-      state.datasets[ds.key] = {
-        cases: sampled.map(r => ({
+      // Shuffle case order using user-specific seed (same user sees same order)
+      const orderSeed = stableHash(`${userId}::${ds.key}::order`);
+      const orderRnd = mulberry32(orderSeed);
+      const shuffledCases = [...fixedSample];
+      for (let i = shuffledCases.length - 1; i > 0; i--) {
+        const j = Math.floor(orderRnd() * (i + 1));
+        [shuffledCases[i], shuffledCases[j]] = [shuffledCases[j], shuffledCases[i]];
+      }
+
+      state.model_evaluation.datasets[ds.key] = {
+        cases: shuffledCases.map(r => ({
           id: String(r.id),
           findings: r.findings,
           indication: r.indication,
@@ -601,7 +643,7 @@ async function startModelEvalMode(userId, state) {
     saveState(userId, state);
     STATE = state;
     ACTIVE_DATASET = DATASETS[0].key;
-    ACTIVE_INDEX = state.datasets[ACTIVE_DATASET].cursor || 0;
+    ACTIVE_INDEX = state.model_evaluation.datasets[ACTIVE_DATASET].cursor || 0;
 
     setHidden($("screenLogin"), true);
     setHidden($("screenApp"), false);
@@ -659,7 +701,7 @@ function renderTabs() {
 function getAllCases() {
   const allCases = [];
   for (const ds of DATASETS) {
-    const d = STATE.datasets[ds.key];
+    const d = STATE.model_evaluation.datasets[ds.key];
     if (d && d.cases) {
       d.cases.forEach(c => {
         allCases.push({
@@ -681,7 +723,7 @@ function getGlobalCursor() {
       cursor += ACTIVE_INDEX;
       break;
     }
-    cursor += STATE.datasets[ds.key].cases.length;
+    cursor += STATE.model_evaluation.datasets[ds.key].cases.length;
   }
   return cursor;
 }
@@ -690,7 +732,7 @@ function getGlobalCursor() {
 function setGlobalCursor(globalIdx) {
   let remaining = globalIdx;
   for (const ds of DATASETS) {
-    const len = STATE.datasets[ds.key].cases.length;
+    const len = STATE.model_evaluation.datasets[ds.key].cases.length;
     if (remaining < len) {
       ACTIVE_DATASET = ds.key;
       ACTIVE_INDEX = remaining;
@@ -701,12 +743,12 @@ function setGlobalCursor(globalIdx) {
   // If we reach here, set to last case
   const lastDs = DATASETS[DATASETS.length - 1];
   ACTIVE_DATASET = lastDs.key;
-  ACTIVE_INDEX = STATE.datasets[ACTIVE_DATASET].cases.length - 1;
+  ACTIVE_INDEX = STATE.model_evaluation.datasets[ACTIVE_DATASET].cases.length - 1;
 }
 
 function computeOverallProgress() {
   const totals = DATASETS.map(ds => {
-    const d = STATE.datasets[ds.key];
+    const d = STATE.model_evaluation.datasets[ds.key];
     const total = d.cases.length;
     const done = Object.keys(d.answers || {}).length;
     return { total, done };
@@ -717,14 +759,29 @@ function computeOverallProgress() {
 }
 
 function renderProgress() {
-  const d = STATE.datasets[ACTIVE_DATASET];
+  const d = STATE.model_evaluation.datasets[ACTIVE_DATASET];
   const total = d.cases.length;
   const done = Object.keys(d.answers || {}).length;
   const { totalAll, doneAll } = computeOverallProgress();
 
-  $("progressText").textContent = `${doneAll}/${totalAll} (bu dataset: ${done}/${total})`;
+  // Model Evaluation Progress
+  $("progressText").textContent = `${doneAll}/${totalAll}`;
   const pct = totalAll ? Math.round((doneAll / totalAll) * 100) : 0;
   $("progressFill").style.width = `${pct}%`;
+
+  // Data Quality Progress
+  const dataQualityDone = Object.keys(STATE.data_quality.answers || {}).length;
+  const dataQualityTotal = STATE.data_quality.cases.length || 100;
+  const dataQualityPct = dataQualityTotal ? Math.round((dataQualityDone / dataQualityTotal) * 100) : 0;
+
+  const dataQualityTextEl = $("dataQualityProgressText");
+  const dataQualityFillEl = $("dataQualityProgressFill");
+  if (dataQualityTextEl) {
+    dataQualityTextEl.textContent = `${dataQualityDone}/${dataQualityTotal}`;
+  }
+  if (dataQualityFillEl) {
+    dataQualityFillEl.style.width = `${dataQualityPct}%`;
+  }
 
   // Update ARIA attributes for accessibility
   const progressEl = document.querySelector('.progress');
@@ -735,7 +792,7 @@ function renderProgress() {
 
 function renderCase() {
   renderProgress();
-  const d = STATE.datasets[ACTIVE_DATASET];
+  const d = STATE.model_evaluation.datasets[ACTIVE_DATASET];
   const cases = d.cases;
   if (!cases.length) {
     $("caseCard").innerHTML = `<div class="panel">No cases.</div>`;
@@ -760,11 +817,11 @@ function renderCase() {
 
   $("caseCard").innerHTML = `
     <div class="case-grid">
-      <div class="panel">
+      <div class="panel case-info">
         <h2>Case Information</h2>
-        <div class="kv"><div class="k">Dataset</div><div class="v">${escapeHtml(ACTIVE_DATASET)}</div></div>
         <div class="kv"><div class="k">Indication</div><div class="v">${escapeHtml(c.indication || "-")}</div></div>
         <div class="kv"><div class="k">Findings</div><div class="v">${escapeHtml(c.findings || "-")}</div></div>
+        <div class="kv"><div class="k">Ground Truth Impression</div><div class="v" style="color:var(--accent);font-weight:500;">${escapeHtml(c.ground_truth || "-")}</div></div>
 
         <div class="kv">
           <div class="k">Comment (optional)</div>
@@ -858,7 +915,7 @@ function renderCase() {
 }
 
 function collectAnswer() {
-  const d = STATE.datasets[ACTIVE_DATASET];
+  const d = STATE.model_evaluation.datasets[ACTIVE_DATASET];
   const c = d.cases[ACTIVE_INDEX];
   const caseId = c.id;
 
@@ -871,24 +928,14 @@ function collectAnswer() {
     }
   });
 
-  const showGt = document.getElementById("toggle_gt")?.checked || false;
   const comment = document.getElementById("comment")?.value || "";
-
-  const openEl = document.querySelector(".output-body.open");
-  let open_model = null;
-  if (openEl) {
-    const id = openEl.id || "";
-    open_model = id.replace("body_", "");
-  }
 
   return {
     dataset: ACTIVE_DATASET,
     case_id: caseId,
     saved_at: nowISO(),
-    show_gt: showGt,
     model_scores: modelScores,
     comment,
-    open_model,
   };
 }
 
@@ -911,7 +958,7 @@ async function onSaveNext() {
     return;
   }
 
-  const d = STATE.datasets[ACTIVE_DATASET];
+  const d = STATE.model_evaluation.datasets[ACTIVE_DATASET];
   d.answers[ans.case_id] = ans;
   STATE.audit.last_saved_at = nowISO();
   STATE.audit.save_count = (STATE.audit.save_count || 0) + 1;
@@ -958,7 +1005,7 @@ async function onSaveNext() {
 
 function onPrev() {
   // Move to previous case (automatically switch datasets if needed)
-  const d = STATE.datasets[ACTIVE_DATASET];
+  const d = STATE.model_evaluation.datasets[ACTIVE_DATASET];
   if (ACTIVE_INDEX > 0) {
     ACTIVE_INDEX -= 1;
     renderCase();
@@ -967,10 +1014,18 @@ function onPrev() {
     const currentIdx = DATASETS.findIndex(ds => ds.key === ACTIVE_DATASET);
     if (currentIdx > 0) {
       ACTIVE_DATASET = DATASETS[currentIdx - 1].key;
-      ACTIVE_INDEX = STATE.datasets[ACTIVE_DATASET].cases.length - 1;
+      ACTIVE_INDEX = STATE.model_evaluation.datasets[ACTIVE_DATASET].cases.length - 1;
       renderCase();
     } else {
-      $("appStatus").textContent = "Already at the first case.";
+      // At first case of first dataset - go back to data quality mode
+      if (STATE.data_quality && STATE.data_quality.cases.length > 0) {
+        setHidden($("screenApp"), true);
+        setHidden($("screenHardness"), false);
+        renderHardnessCase();
+        showToast('Returning to Data Quality Assessment', 'info');
+      } else {
+        $("appStatus").textContent = "Already at the first case.";
+      }
     }
   }
 }
@@ -997,7 +1052,7 @@ function onExport() {
   };
 
   for (const ds of DATASETS) {
-    const d = STATE.datasets[ds.key];
+    const d = STATE.model_evaluation.datasets[ds.key];
     exportObj.datasets[ds.key] = {
       cases: d.cases.map(c => ({ id: c.id })),
       answers: d.answers,
@@ -1058,10 +1113,10 @@ async function onReset() {
 // ===== HARDNESS EVALUATION MODE =====
 
 function renderHardnessCase() {
-  const h = STATE.hardness_evaluation;
+  const h = STATE.data_quality;
   const total = h.cases.length;
   if (!total) {
-    $("hardnessCard").innerHTML = `<div class="panel">No hardness cases loaded.</div>`;
+    $("hardnessCard").innerHTML = `<div class="panel">No data quality cases loaded.</div>`;
     return;
   }
 
@@ -1073,18 +1128,46 @@ function renderHardnessCase() {
   const caseId = c.id;
   const existing = h.answers[caseId];
 
-  // Update progress
+  // Update Data Quality progress
   const done = Object.keys(h.answers).length;
-  $("hardnessProgressText").textContent = `${done}/${total} completed`;
+  $("hardnessProgressText").textContent = `${done}/${total}`;
   const pct = Math.round((done / total) * 100);
   $("hardnessProgressFill").style.width = `${pct}%`;
 
+  // Update Model Evaluation progress
+  if (STATE.model_evaluation && STATE.model_evaluation.datasets) {
+    const totals = DATASETS.map(ds => {
+      const d = STATE.model_evaluation.datasets[ds.key];
+      if (!d) return { total: 0, done: 0 };
+      const total = d.cases?.length || 0;
+      const done = Object.keys(d.answers || {}).length;
+      return { total, done };
+    });
+    const totalAll = totals.reduce((a, x) => a + x.total, 0);
+    const doneAll = totals.reduce((a, x) => a + x.done, 0);
+
+    // If datasets haven't been loaded yet, show expected total (3 datasets × 10 cases each)
+    const expectedTotal = DATASETS.length * (STATE.config?.sample_size_per_dataset || 10);
+    const displayTotal = totalAll > 0 ? totalAll : expectedTotal;
+
+    const modelEvalPct = displayTotal ? Math.round((doneAll / displayTotal) * 100) : 0;
+
+    const modelEvalTextEl = $("hardnessModelEvalProgressText");
+    const modelEvalFillEl = $("hardnessModelEvalProgressFill");
+    if (modelEvalTextEl) {
+      modelEvalTextEl.textContent = `${doneAll}/${displayTotal}`;
+    }
+    if (modelEvalFillEl) {
+      modelEvalFillEl.style.width = `${modelEvalPct}%`;
+    }
+  }
+
   // Render case card
   $("hardnessCard").innerHTML = `
-    <div class="panel">
+    <div class="panel case-info">
       <div style="margin-bottom:16px;">
         <div style="color:var(--muted);font-size:12px;margin-bottom:4px;">Case ${idx + 1}/${total} (ID: ${escapeHtml(caseId)})</div>
-        <div style="font-size:13px;color:var(--accent);margin-bottom:4px;">System Assigned: <strong>Level ${escapeHtml(c.hardness)}</strong></div>
+        <div style="font-size:13px;color:var(--accent);margin-bottom:4px;">System Hardness: <strong>Level ${escapeHtml(c.hardness)}</strong></div>
       </div>
 
       <div style="margin-bottom:12px;">
@@ -1102,38 +1185,59 @@ function renderHardnessCase() {
         <div style="line-height:1.6;color:var(--accent);">${escapeHtml(c.ground_truth || "[EMPTY]")}</div>
       </div>
 
+      <div style="margin-bottom:16px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Chain-of-Thought (CoT)</div>
+        <div style="line-height:1.6;font-size:13px;">${escapeHtml(c.cot || "[NO COT]")}</div>
+      </div>
+
       <div style="margin-bottom:12px;">
-        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:10px;">Your Hardness Rating (1-4):</label>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
-            <input type="radio" name="hardnessRating" value="1" ${existing?.hardness === "1" ? "checked" : ""} style="margin-top:2px;width:16px;height:16px;accent-color:#5a7bb5;flex-shrink:0;" />
-            <div style="flex:1;">
-              <div style="font-size:13px;font-weight:600;margin-bottom:1px;">1 - Trivial</div>
-              <div style="font-size:11px;color:var(--muted);">straightforward, no ambiguity</div>
-            </div>
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:8px;">Hardness Rating (1-4):</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="hardnessRating" value="1" ${existing?.hardness === "1" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">1</span>
           </label>
-          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
-            <input type="radio" name="hardnessRating" value="2" ${existing?.hardness === "2" ? "checked" : ""} style="margin-top:2px;width:16px;height:16px;accent-color:#5a7bb5;flex-shrink:0;" />
-            <div style="flex:1;">
-              <div style="font-size:13px;font-weight:600;margin-bottom:1px;">2 - Simple</div>
-              <div style="font-size:11px;color:var(--muted);">few findings, direct mapping</div>
-            </div>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="hardnessRating" value="2" ${existing?.hardness === "2" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">2</span>
           </label>
-          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
-            <input type="radio" name="hardnessRating" value="3" ${existing?.hardness === "3" ? "checked" : ""} style="margin-top:2px;width:16px;height:16px;accent-color:#5a7bb5;flex-shrink:0;" />
-            <div style="flex:1;">
-              <div style="font-size:13px;font-weight:600;margin-bottom:1px;">3 - Moderate</div>
-              <div style="font-size:11px;color:var(--muted);">multiple findings OR ambiguity</div>
-            </div>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="hardnessRating" value="3" ${existing?.hardness === "3" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">3</span>
           </label>
-          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
-            <input type="radio" name="hardnessRating" value="4" ${existing?.hardness === "4" ? "checked" : ""} style="margin-top:2px;width:16px;height:16px;accent-color:#5a7bb5;flex-shrink:0;" />
-            <div style="flex:1;">
-              <div style="font-size:13px;font-weight:600;margin-bottom:1px;">4 - Hard</div>
-              <div style="font-size:11px;color:var(--muted);">complex reasoning, nuanced</div>
-            </div>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="hardnessRating" value="4" ${existing?.hardness === "4" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">4</span>
           </label>
         </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">1=trivial, 2=simple, 3=moderate, 4=hard</div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:8px;">CoT Quality Rating (1-5):</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="cotRating" value="1" ${existing?.cot_quality === "1" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">1</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="cotRating" value="2" ${existing?.cot_quality === "2" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">2</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="cotRating" value="3" ${existing?.cot_quality === "3" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">3</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="cotRating" value="4" ${existing?.cot_quality === "4" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">4</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
+            <input type="radio" name="cotRating" value="5" ${existing?.cot_quality === "5" ? "checked" : ""} style="width:16px;height:16px;accent-color:#5a7bb5;" />
+            <span style="font-weight:600;">5</span>
+          </label>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">1=poor, 2=fair, 3=good, 4=very good, 5=excellent</div>
       </div>
 
       <div style="margin-bottom:12px;">
@@ -1149,18 +1253,23 @@ function renderHardnessCase() {
 }
 
 function collectHardnessAnswer() {
-  const h = STATE.hardness_evaluation;
+  const h = STATE.data_quality;
   const c = h.cases[h.cursor];
   const caseId = c.id;
 
-  const radioSelected = document.querySelector('input[name="hardnessRating"]:checked');
-  const rating = radioSelected ? radioSelected.value : "";
+  const hardnessRadio = document.querySelector('input[name="hardnessRating"]:checked');
+  const hardnessRating = hardnessRadio ? hardnessRadio.value : "";
+
+  const cotRadio = document.querySelector('input[name="cotRating"]:checked');
+  const cotQuality = cotRadio ? cotRadio.value : "";
+
   const comment = document.getElementById("hardnessComment")?.value || "";
 
   return {
     case_id: caseId,
     system_hardness: c.hardness, // Original system assignment
-    hardness: rating, // User's rating
+    hardness: hardnessRating, // User's hardness rating (1-5)
+    cot_quality: cotQuality, // User's CoT quality rating (1-5)
     comment,
     saved_at: nowISO(),
   };
@@ -1168,7 +1277,10 @@ function collectHardnessAnswer() {
 
 function validateHardnessAnswer(ans) {
   if (!ans.hardness || ans.hardness === "") {
-    return "Please select a hardness level (1-4).";
+    return "Please select a hardness level (1-5).";
+  }
+  if (!ans.cot_quality || ans.cot_quality === "") {
+    return "Please select a CoT quality rating (1-5).";
   }
   return null;
 }
@@ -1182,7 +1294,7 @@ async function onHardnessSaveNext() {
     return;
   }
 
-  const h = STATE.hardness_evaluation;
+  const h = STATE.data_quality;
   h.answers[ans.case_id] = ans;
 
   // Save to localStorage
@@ -1208,13 +1320,22 @@ async function onHardnessSaveNext() {
     h.cursor += 1;
     renderHardnessCase();
   } else {
-    $("hardnessStatus").textContent = "🎉 All hardness cases completed!";
-    showToast('Congratulations! All hardness evaluations completed!', 'success');
+    // All data quality cases completed - transition to model evaluation
+    STATE.data_quality.completed = true;
+
+    // Save state before transitioning
+    await supabaseSave(STATE.user.id, STATE);
+
+    // Hide hardness screen and show model evaluation
+    setHidden($("screenHardness"), true);
+    await startModelEvalMode(STATE.user.id, STATE);
+
+    showToast('Data Quality completed! Starting Model Evaluation...', 'success');
   }
 }
 
 function onHardnessPrev() {
-  const h = STATE.hardness_evaluation;
+  const h = STATE.data_quality;
   if (h.cursor > 0) {
     h.cursor -= 1;
     renderHardnessCase();
